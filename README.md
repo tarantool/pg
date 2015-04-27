@@ -12,12 +12,12 @@ Add http://rocks.tarantool.org to your luarocks repository and then use
 ### Usage
 
 ``` lua
-    local pg = require('pg')
-    local conn = pg.connect({host = localhost, user = 'user', pass = 'pass', db = 'db'})
-    local tuples = conn:execute("SELECT ? AS a, 'xx' AS b", 42))
-    conn:begin()
-    conn:execute("INSERT INTO test VALUES(1, 2, 3)")
-    conn:commit()
+local pg = require('pg')
+local conn = pg.connect({host = localhost, user = 'user', pass = 'pass', db = 'db'})
+local tuples = conn:execute("SELECT ? AS a, 'xx' AS b", 42))
+conn:begin()
+conn:execute("INSERT INTO test VALUES(1, 2, 3)")
+conn:commit()
 ```
 
 ## API Documentation
@@ -95,5 +95,5 @@ Execute a dummy statement to check that connection is alive.
  * [Tests][]
 
 [Tarantool]: http://github.com/tarantool/tarantool
-[Tests]: https://github.com/tarantool/http/tree/master/test
+[Tests]: https://github.com/tarantool/pg/tree/master/test
 [PQconnstring]: http://www.postgresql.org/docs/9.4/static/libpq-connect.html#LIBPQ-CONNSTRING
