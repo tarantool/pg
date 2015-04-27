@@ -6,8 +6,22 @@
 
 ### Installation
 
-Add http://rocks.tarantool.org to your luarocks repository and then use
-`luarocks install pg`.
+Clone repository and then build it using CMake:
+
+``` bash
+git clone https://github.com/tarantool/pg.git
+cd pg && cmake . -DCMAKE_BUILD_TYPE=RelWithDebugInfo
+make
+make install
+```
+
+You can also use LuaRocks:
+
+``` bash
+luarocks install https://raw.githubusercontent.com/tarantool/pg/master/pg-scm-1.rockspec --local
+```
+
+See [tarantool/rocks][TarantoolRocks] for LuaRocks configuration details.
 
 ### Usage
 
@@ -91,9 +105,11 @@ Execute a dummy statement to check that connection is alive.
 
 ## See Also
 
- * [Tarantool][]
  * [Tests][]
+ * [Tarantool][]
+ * [Tarantool Rocks][TarantoolRocks]
 
 [Tarantool]: http://github.com/tarantool/tarantool
 [Tests]: https://github.com/tarantool/pg/tree/master/test
 [PQconnstring]: http://www.postgresql.org/docs/9.4/static/libpq-connect.html#LIBPQ-CONNSTRING
+[TarantoolRocks]: https://github.com/tarantool/rocks
