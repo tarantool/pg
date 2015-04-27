@@ -4,6 +4,11 @@
 
 ## Getting Started
 
+### Prerequisites
+
+ * Tarantool 1.6.5+ with header files (tarantool && tarantool-dev packages)
+ * PostgreSQL 8.1+ header files (libpq-dev package)
+
 ### Installation
 
 Clone repository and then build it using CMake:
