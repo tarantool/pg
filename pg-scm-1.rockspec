@@ -14,11 +14,10 @@ dependencies = {
 }
 external_dependencies = {
     TARANTOOL = {
-        header = "tarantool/tarantool.h"
+        header = "tarantool/module.h"
     },
     POSTGRESQL = {
         header = "postgresql/libpq-fe.h",
-        library = "pq"
     }
 }
 build = {
