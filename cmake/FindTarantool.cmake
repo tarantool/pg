@@ -5,14 +5,14 @@ macro(extract_definition name output input)
         ${output} "${_t}")
 endmacro()
 
-find_path(_dir tarantool.h
+find_path(_dir module.h
   HINTS ENV TARANTOOL_DIR
   PATH_SUFFIXES include/tarantool
 )
 
 if (_dir)
     set(_config "-")
-    file(READ "${_dir}/tarantool.h" _config0)
+    file(READ "${_dir}/module.h" _config0)
     string(REPLACE "\\" "\\\\" _config ${_config0})
     unset(_config0)
     extract_definition(PACKAGE_VERSION TARANTOOL_VERSION ${_config})
