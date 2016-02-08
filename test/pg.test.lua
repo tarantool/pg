@@ -109,12 +109,6 @@ function test_pool_fiber2(p, q)
     local res = true
     for i = 1, 50 do
         local r, m = p:execute('SELECT * from tmptest')
-	for i, k in pairs(r) do
-	    print(i)
-	    for j, v in pairs(k) do
-	        print(j, v)
-	    end
-	end
 	if #r > 0 then
 	    res = false
 	end
@@ -123,28 +117,39 @@ function test_pool_fiber2(p, q)
     q:put(res)
 end
 
+function test_pool_concurrent_fibers(p, q)
+    for i = 1, 25 do
+        local r, m = p:execute('SELECT pg_sleep(0.02)')
+    end
+    q:put(true)
+end
+
 function test_pool_concurrent(t, p)
     t:plan(2)
     p:execute('CREATE TABLE tmptest (ID INTEGER)')
     local q = f.channel(2)
-    local t1 = f.time()
     f.create(test_pool_fiber1, p, q)
     f.create(test_pool_fiber2, p, q)
     t:is(q:get() and q:get(), true, 'different transaction')
+    local t1 = f.time()
+    f.create(test_pool_concurrent_fibers, p, q)
+    f.create(test_pool_concurrent_fibers, p, q)
+    q:get()
+    q:get()
     t:ok(f.time() - t1 < 0.6, 'parallel execution')
     p:execute('DROP TABLE tmptest')
 end
 
 function test_conn_fiber1(c, q)
     for i = 1, 10 do
-        c:execute('select pg_sleep(0.05)')
+        c:execute('SELECT pg_sleep(0.05)')
     end
     q:put(true)
 end
 
 function test_conn_fiber2(c, q)
     for i = 1, 25 do
-        c:execute('select pg_sleep(0.02)')
+        c:execute('SELECT pg_sleep(0.02)')
     end
     q:put(true)
 end
@@ -158,7 +163,7 @@ function test_conn_concurrent(t, p)
     f.create(test_conn_fiber2, c, q)
     q:get()
     q:get()
-    t:ok(f.time() - t1 >= 0.5, 'concurrent connections')
+    t:ok(f.time() - t1 >= 0.95, 'concurrent connections')
 end
 
 tap.test('pool old api', test_old_api, p)

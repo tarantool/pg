@@ -10,7 +10,7 @@ local pool_mt
 local function pg_connect(conn_str)
     local pg_status, conn = driver.connect(conn_str)
     if pg_status == -1 then
-        return conn_error(pool, conn)
+        return nil, conn
     end
     while true do
         local wait, fd = conn:connpoll()
