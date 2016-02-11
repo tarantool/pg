@@ -140,12 +140,16 @@ lua_pg_pushresult(struct lua_State *L, PGresult *r)
 			switch (PQftype(r, j)) {
 				case INT2OID:
 				case INT4OID:
-				case INT8OID:
 				case NUMERICOID: {
 					lua_pushlstring(L, s, len);
 					double v = lua_tonumber(L, -1);
 					lua_pop(L, 1);
 					lua_pushnumber(L, v);
+					break;
+				}
+				case INT8OID: {
+					long long v = strtoll(s, NULL, 0);
+					luaL_pushint64(L, v);
 					break;
 				}
 				case BOOLOID:

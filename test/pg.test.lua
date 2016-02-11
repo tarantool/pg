@@ -7,7 +7,7 @@ local pg = require('pg')
 local json = require('json')
 
 require('tap').test('pg', function(t)
-    t:plan(16)
+    t:plan(17)
     local host, port, user, pass, db = string.match(os.getenv('PG') or '',
         "([^:]*):([^:]*):([^:]*):([^:]*):([^:]*)")
 
@@ -59,5 +59,9 @@ require('tap').test('pg', function(t)
     t:q('DROP TABLE IF EXISTS unknown_table', {})
     local tuples, reason = c:execute('DROP TABLE unknown_table')
     t:like(reason, 'unknown_table', 'error')
+    c:execute('CREATE TABLE int64test (id BIGINT)')
+    c:execute('INSERT INTO int64test VALUES(1234567890123456789)')
+    t:q('SELECT id FROM int64test', {{ id = 1234567890123456789LL}})
+    c:execute('drop table int64test')
     t:ok(c:close(), "close")
 end)
