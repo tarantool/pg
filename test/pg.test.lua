@@ -166,13 +166,23 @@ function test_conn_concurrent(t, p)
     t:ok(f.time() - t1 >= 0.95, 'concurrent connections')
 end
 
+
+function test_pg_int64(t, p)
+    t:plan(1)
+    p:execute('create table int64test (id bigint)')
+    p:execute('insert into int64test values(1234567890123456789)')
+    r, m = p:execute('select id from int64test')
+    p:execute('drop table int64test')
+    t:ok(r[1]['id'] == 1234567890123456789LL, 'int64 test') 
+end
+
 tap.test('pool old api', test_old_api, p)
 tap.test('connection old api', test_old_api, p:get())
 tap.test('gc free connection', test_gc, p)
 tap.test('pool bind connection', test_pool_bind, p)
 tap.test('pool concurrent', test_pool_concurrent, p)
 tap.test('connection concurrent', test_conn_concurrent, p)
-p:get()
+tap.test('int64', test_pg_int64, p)
 collectgarbage()
 p:close()
 

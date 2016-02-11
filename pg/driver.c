@@ -72,7 +72,7 @@ lua_check_pgconn(struct lua_State *L, int index)
 	return conn;
 }
 
-/** 
+/**
  * put query result tuples to given table on lua stack
  */
 static int
@@ -97,12 +97,16 @@ safe_pg_parsetuples(struct lua_State *L)
 			switch (PQftype(r, col)) {
 				case INT2OID:
 				case INT4OID:
-				case INT8OID:
 				case NUMERICOID: {
 					lua_pushlstring(L, val, len);
 					double v = lua_tonumber(L, -1);
 					lua_pop(L, 1);
 					lua_pushnumber(L, v);
+					break;
+				}
+				case INT8OID: {
+					long long v = strtoll(val, NULL, 10);
+					luaL_pushint64(L, v);
 					break;
 				}
 				case BOOLOID:
@@ -123,7 +127,7 @@ safe_pg_parsetuples(struct lua_State *L)
 }
 
 /**
- * push query execution status to lua stack 
+ * push query execution status to lua stack
  */
 static int
 safe_pg_parsestatus(struct lua_State *L)
@@ -160,11 +164,10 @@ safe_pg_resulterror(struct lua_State *L)
 	lua_pushstring(L, "message");
 	lua_pushvalue(L, 2);
 	lua_settable(L, -3);
-	
 	return 1;
 }
 
-/** 
+/**
  * load result fom postgres into lua
  */
 static int
@@ -224,8 +227,8 @@ lua_pg_resultget(struct lua_State *L)
 	return 2;
 }
 
-/** 
- * check for available results 
+/**
+ * check for available results
  */
 static int
 lua_pg_resultavailable(struct lua_State *L)
@@ -245,7 +248,7 @@ lua_pg_resultavailable(struct lua_State *L)
 	return 2;
 }
 
-/** 
+/**
  * start query execution
  */
 static int
@@ -284,8 +287,8 @@ lua_pg_executeasync(struct lua_State *L)
 			if (lua_isboolean(L, idx + 3)) {
 				static const char pg_true[] = "t";
 				static const char pg_false[] = "f";
-				paramValues[idx] = 
-					lua_toboolean(L, idx + 3) ? 
+				paramValues[idx] =
+					lua_toboolean(L, idx + 3) ?
 					pg_true : pg_false;
 				paramLengths[idx] = 1;
 				paramTypes[idx] = BOOLOID;
@@ -306,7 +309,7 @@ lua_pg_executeasync(struct lua_State *L)
 			paramLengths[idx] = len;
 			paramTypes[idx] = TEXTOID;
 		}
-		res = PQsendQueryParams(conn, sql, paramCount, paramTypes, 
+		res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
 			paramValues, paramLengths, NULL, 0);
 	}
 	else
@@ -467,7 +470,7 @@ lua_pg_connect(struct lua_State *L)
 		lua_pushinteger(L, -1);
 		int fail = safe_pushstring(L, PQerrorMessage(conn));
 		PQfinish(conn);
-		return fail ? lua_error(L) : 2;		
+		return fail ? lua_error(L) : 2;
 	}
 
 	lua_pushinteger(L, 1);
@@ -521,7 +524,7 @@ luaopen_pg_driver(lua_State *L)
 		{"quote",	lua_pg_quote},
 		{"quote_ident",	lua_pg_quote_ident},
 		{"close",	lua_pg_close},
-		{"connpoll", 	lua_pg_connpoll},
+		{"connpoll",	lua_pg_connpoll},
 		{"active", lua_pg_transaction_active},
 		{"__tostring",	lua_pg_tostring},
 		{"__gc",	lua_pg_gc},
