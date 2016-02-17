@@ -1,0 +1,5 @@
+tarantool-pg/
+files
+stamp-*
+*.substvars
+*.log

@@ -1,5 +1,6 @@
 add_library(driver SHARED driver.c)
 target_link_libraries(driver ${PostgreSQL_LIBRARIES} -rdynamic)
 set_target_properties(driver PROPERTIES PREFIX "" OUTPUT_NAME "driver")
-install(TARGETS driver LIBRARY DESTINATION ${TARANTOOL_LIBDIR}/pg)
-install(FILES init.lua DESTINATION ${TARANTOOL_LUADIR}/pg)
+
+install(TARGETS driver LIBRARY DESTINATION ${TARANTOOL_INSTALL_LIBDIR}/pg)
+install(FILES init.lua DESTINATION ${TARANTOOL_INSTALL_LUADIR}/pg)

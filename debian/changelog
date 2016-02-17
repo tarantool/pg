@@ -1,0 +1,5 @@
+tarantool-pg (1.0.2-1) unstable; urgency=medium
+
+  * Initial release
+
+ -- Roman Tsisyk <roman@tarantool.org>  Wed, 16 Sep 2015 17:16:00 +0300
