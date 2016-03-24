@@ -11,11 +11,11 @@ local f = require('fiber')
 local host, port, user, pass, db = string.match(os.getenv('PG') or '',
     "([^:]*):([^:]*):([^:]*):([^:]*):([^:]*)")
 
-local p, msg = pg.pool_create({ host = host, port = port, user = user, pass = pass, 
+local p, msg = pg.pool_create({ host = host, port = port, user = user, pass = pass,
     db = db, raise = false, size = 2 })
 if p == nil then error(msg) end
 
-local conn, msg = pg.connect({ host = host, port = port, user = user, pass = pass, 
+local conn, msg = pg.connect({ host = host, port = port, user = user, pass = pass,
     db = db, raise = false})
 if conn == nil then error(msg) end
 
