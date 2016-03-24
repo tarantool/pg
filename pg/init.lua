@@ -42,8 +42,8 @@ local function pg_execute(conn, sql, ...)
 end
 
 -- pool error helper
-local function pool_error(pool, msg)
-    if pool.raise then
+local function get_error(raise, msg)
+    if raise then
         error(msg)
     end
     return nil, msg
@@ -78,7 +78,7 @@ local function conn_get(pool)
     if pg_conn == nil then
         status, pg_conn = driver.connect(pool.conn_string)
         if status == -1 then
-            return pool_error(pool, pg_conn)
+            return get_error(pool.raise, pg_conn)
         end
         if status == -2 then
             return status
@@ -103,16 +103,16 @@ conn_mt = {
     __index = {
         execute = function(self, sql, ...)
             if not self.usable then
-                return pool_error(self.pool, 'Connection is not usable')
+                return get_error(self.raise.pool, 'Connection is not usable')
             end
             if not self.queue:get() then
                 self.queue:put(false)
-                return pool_error(self.pool, 'Connection is broken')
+                return get_error(self.raise.pool, 'Connection is broken')
             end
             local status, datas = pg_execute(self.conn, sql, ...)
             if status == -1 then
                 self.queue:put(false)
-                return pool_error(self.pool, datas)
+                return get_error(self.raise.pool, datas)
             end
             self.queue:put(true)
             return unpack(datas)
@@ -135,16 +135,16 @@ conn_mt = {
         end,
         active = function(self)
             if not self.usable then
-                return pool_error(self.pool, 'Connection is not usable')
+                return get_error(self.raise.pool, 'Connection is not usable')
             end
             if not self.queue:get() then
                 self.queue:put(false)
-                return pool_error(self.pool, 'Connection is broken')
+                return get_error(self.raise.pool, 'Connection is broken')
             end
             local status, msg = self.conn:active()
             if status ~= 1 then
                 self.queue:put(false)
-                return pool_error(self.pool, msg)
+                return get_error(self.raise.pool, msg)
             end
             self.queue:put(true)
             return msg
@@ -192,7 +192,7 @@ local function pool_create(opts)
                 pg_conn:close()
             end
             if status == -1 then
-                return pool_error(self, msg)
+                return get_error(opts.raise, conn)
             else
                 return -2
             end
@@ -232,7 +232,7 @@ end
 -- Returns connection
 local function pool_get(self)
     if not self.usable then
-        return pool_error(self, 'Pool is not usable')
+        return get_error(self.raise, 'Pool is not usable')
     end
     local conn = conn_get(self)
     local reset_sql = 'BEGIN; RESET ALL; COMMIT;'
@@ -267,7 +267,7 @@ local function connect(opts)
     local conn_string = build_conn_string(opts)
     local status, pg_conn = driver.connect(conn_string)
     if status == -1 then
-        return pool_error(pool, pg_conn)
+        return get_error(pool.raise, pg_conn)
     end
     if status == -2 then
         return -2
