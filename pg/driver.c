@@ -47,6 +47,13 @@
 
 #include <stdint.h>
 
+/**
+ * Infinity timeout from tarantool_ev.c. I mean, this should be in
+ * a module.h file.
+ */
+#define TIMEOUT_INFINITY 365 * 86400 * 100.0
+static const char pg_driver_label[] = "__tnt_pg_driver";
+
 static int
 save_pushstring_wrapped(struct lua_State *L)
 {
@@ -66,7 +73,7 @@ safe_pushstring(struct lua_State *L, char *str)
 static inline PGconn *
 lua_check_pgconn(struct lua_State *L, int index)
 {
-	PGconn **conn_p = (PGconn **)luaL_checkudata(L, index, "pg");
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, index, pg_driver_label);
 	if (conn_p == NULL || *conn_p == NULL)
 		luaL_error(L, "Driver fatal error (No connection)");
 	return *conn_p;
@@ -121,16 +128,16 @@ safe_pg_parsetuples(struct lua_State *L)
 	PGresult *res = (PGresult *)lua_topointer(L, 1);
 	int row, rows = PQntuples(res);
 	int col, cols = PQnfields(res);
-	size_t row_no = lua_objlen(L, -1) + 1;
-	for (row = 0; row < rows; ++row, ++row_no) {
-		lua_pushnumber(L, row_no);
+	lua_newtable(L);
+	for (row = 0; row < rows; ++row) {
+		lua_pushnumber(L, row + 1);
 		lua_newtable(L);
 		for (col = 0; col < cols; ++col)
 			if (parse_pg_value(L, res, row, col))
 				lua_settable(L, -3);
 		lua_settable(L, -3);
 	}
-	return 0;
+	return 1;
 }
 
 /**
@@ -165,10 +172,12 @@ pg_wait_for_result(PGconn *conn)
 {
 	int sock = PQsocket(conn);
 	while (true) {
+		if (fiber_is_cancelled())
+			return -2;
 		if (PQconsumeInput(conn) != 1)
 			return PQstatus(conn) == CONNECTION_BAD ? -1: 0;
 		if (PQisBusy(conn))
-			coio_wait(sock, COIO_READ, -1);
+			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
 		else
 			break;
 	}
@@ -197,27 +206,20 @@ lua_pg_resultget(struct lua_State *L)
 		return 1;
 	}
 	int fail = 0;
+	int return_tuples = 0;
 	int status = PQresultStatus(res);
 	switch (status) {
 		case PGRES_TUPLES_OK:
 		case PGRES_SINGLE_TUPLE:
-			// Second param should be table to fetch data
-			if (!lua_istable(L, 2)) {
-				fail = true;
-				safe_pushstring(L,
-					"Pass table as second param for data");
-				break;
-			}
 			lua_pushinteger(L, 1);
-			lua_pushcfunction(L, safe_pg_parsetuples);
-			lua_pushlightuserdata(L, res);
-			// Forward second param to parsetuples
-			lua_pushvalue(L, 2);
-			if ((fail = lua_pcall(L, 2, 0, 0)))
-				break;
 			lua_pushcfunction(L, safe_pg_parsestatus);
 			lua_pushlightuserdata(L, res);
+			if ((fail = lua_pcall(L, 1, 1, 0)))
+				break;
+			lua_pushcfunction(L, safe_pg_parsetuples);
+			lua_pushlightuserdata(L, res);
 			fail = lua_pcall(L, 1, 1, 0);
+			return_tuples = 1;
 			break;
 		case PGRES_COMMAND_OK:
 			lua_pushinteger(L, 1);
@@ -241,7 +243,7 @@ lua_pg_resultget(struct lua_State *L)
 	PQclear(res);
 	if (fail)
 		return lua_error(L);
-	return 2;
+	return 2 + return_tuples;
 }
 
 /**
@@ -363,7 +365,7 @@ lua_pg_transaction_active(struct lua_State *L)
 static int
 lua_pg_close(struct lua_State *L)
 {
-	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, "pg");
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, pg_driver_label);
 	if (conn_p == NULL || *conn_p == NULL) {
 		lua_pushboolean(L, 0);
 		return 1;
@@ -380,7 +382,7 @@ lua_pg_close(struct lua_State *L)
 static int
 lua_pg_gc(struct lua_State *L)
 {
-	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, "pg");
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, pg_driver_label);
 	if (conn_p && *conn_p)
 		PQfinish(*conn_p);
 	*conn_p = NULL;
@@ -480,6 +482,10 @@ lua_pg_connect(struct lua_State *L)
 
 	int sock = PQsocket(conn);
 	while (true) {
+		if (fiber_is_cancelled()) {
+			lua_pushinteger(L, -2);
+			return 1;
+		}
 		PostgresPollingStatusType status = PQconnectPoll(conn);
 		if (status == PGRES_POLLING_OK) {
 			PQsetNoticeProcessor(conn, pg_notice, NULL);
@@ -487,16 +493,16 @@ lua_pg_connect(struct lua_State *L)
 			PGconn **conn_p = (PGconn **)
 				lua_newuserdata(L, sizeof(conn));
 			*conn_p = conn;
-			luaL_getmetatable(L, "pg");
+			luaL_getmetatable(L, pg_driver_label);
 			lua_setmetatable(L, -2);
 			return 2;
 		}
 		if (status == PGRES_POLLING_READING) {
-			coio_wait(sock, COIO_READ, -1);
+			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
 			continue;
 		}
 		if (status == PGRES_POLLING_WRITING) {
-			coio_wait(sock, COIO_WRITE, -1);
+			coio_wait(sock, COIO_WRITE, TIMEOUT_INFINITY);
 			continue;
 		}
 		break;
@@ -522,11 +528,11 @@ luaopen_pg_driver(lua_State *L)
 		{NULL, NULL}
 	};
 
-	luaL_newmetatable(L, "pg");
+	luaL_newmetatable(L, pg_driver_label);
 	lua_pushvalue(L, -1);
 	luaL_register(L, NULL, methods);
 	lua_setfield(L, -2, "__index");
-	lua_pushstring(L, "pg");
+	lua_pushstring(L, pg_driver_label);
 	lua_setfield(L, -2, "__metatable");
 	lua_pop(L, 1);
 

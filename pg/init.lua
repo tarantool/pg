@@ -7,44 +7,38 @@ local ffi = require('ffi')
 local pool_mt
 local conn_mt
 
--- internal postgres connection function
-local function pg_connect(conn_str)
-    local pg_status, conn = driver.connect(conn_str)
-    if pg_status == -1 then
-        return nil, conn
-    end
-    return conn
-end
-
 -- internal execute function
--- returns executions state (1 - ok, 0 - error, -1 - bad connection),
--- result set and status message
+-- returns executions state (1 - ok, 0 - error, -1 - bad connection,
+-- -2 - fiber cancelled),
+-- returns array of datasets and status messages
 local function pg_execute(conn, sql, ...)
     local pg_status, msg = conn:sendquery(sql, ...)
     if pg_status ~= 1 then
         return pg_status, msg
     end
-    local recordset = {}
-    local last_msg = nil
     local error_status = nil
     local error_msg = nil
+    local results = {}
+    local result_no = 0
     while true do
-        pg_status, msg = conn:resultget(recordset)
+        pg_status,
+            results[result_no * 2 + 2], results[result_no * 2 + 1] =
+            conn:resultget()
         if pg_status == nil then
             break
         end
-        if pg_status ~= 1 then
+        if pg_status < 0 then
             -- we need to repeat geting result until we get null result value
             -- just preserve error msg and status
             error_status = pg_status
             error_msg = msg
         end
-        last_msg = msg
+        result_no = result_no + 1
     end
     if error_status ~= nil then
-        return error_status, nil, error_msg
+        return error_status, error_msg
     end
-    return 1, recordset, last_msg
+    return 1, results
 end
 
 -- pool error helper
@@ -55,30 +49,42 @@ local function pool_error(pool, msg)
     return nil, msg
 end
 
--- create cursor object
-local function conn_get(pool)
-    local pgconn = pool.queue:get()
-    if pgconn == nil then
-        pgconn, msg = pg_connect(pool.conn_str)
-        if pgconn == nil then
-            return pool_error(pool, msg)
-        end
-    end
+--create a new connection
+local function conn_create(pg_conn, pool)
     local queue = fiber.channel(1)
     queue:put(true)
     local conn = setmetatable({
         usable = true,
         pool = pool,
-        conn = pgconn,
+        conn = pg_conn,
         queue = queue,
-	--we can use ffi gc to return pg connection to pool
+        --we can use ffi gc to return pg connection to pool
         __gc_hook = ffi.gc(ffi.new('void *'),
             function(self)
-               pool.queue:put(pgconn)
+                if pool.virtual then
+                    pg_conn:close()
+                else
+                    pool.queue:put(pg_conn)
+                end
             end)
     }, conn_mt)
 
     return conn
+end
+
+-- get connection from pool
+local function conn_get(pool)
+    local pg_conn = pool.queue:get()
+    if pg_conn == nil then
+        status, pg_conn = driver.connect(pool.conn_string)
+        if status == -1 then
+            return pool_error(pool, pg_conn)
+        end
+        if status == -2 then
+            return status
+        end
+    end
+    return conn_create(pg_conn, pool)
 end
 
 local function conn_put(conn)
@@ -103,25 +109,22 @@ conn_mt = {
                 self.queue:put(false)
                 return pool_error(self.pool, 'Connection is broken')
             end
-            local status, data, msg = pg_execute(self.conn, sql, ...)
+            local status, datas = pg_execute(self.conn, sql, ...)
             if status == -1 then
                 self.queue:put(false)
-                return pool_error(self.pool, msg)
+                return pool_error(self.pool, datas)
             end
             self.queue:put(true)
-            if status == 0 then
-                return pool_error(self.pool, msg)
-            end
-            return data, msg
+            return unpack(datas)
         end,
         begin = function(self)
-            return self:execute('BEGIN')
+            self:execute('BEGIN')
         end,
         commit = function(self)
-            return self:execute('COMMIT')
+            self:execute('COMMIT')
         end,
         rollback = function(self)
-            return self:execute('ROLLBACK')
+            self:execute('ROLLBACK')
         end,
         ping = function(self)
             local pool = self.pool
@@ -146,49 +149,53 @@ conn_mt = {
             self.queue:put(true)
             return msg
         end
-
     }
 }
 
+local function build_conn_string(opts)
+    if opts.conn_string then
+        return opts.conn_string
+    end
+    local connb = {}
+    if opts.host then
+        table.insert(connb, string.format(" host='%s'", opts.host))
+    end
+    if opts.port then
+        table.insert(connb, string.format(" port='%s'", opts.port))
+    end
+    if opts.user then
+        table.insert(connb, string.format(" user='%s'", opts.user))
+    end
+    if opts.pass or opts.password then
+        table.insert(connb, string.format(" password='%s'",
+            opts.pass or opts.password))
+    end
+    if opts.db then
+        table.insert(connb, string.format(" dbname='%s'", opts.db))
+    end
+    return table.concat(connb)
+end
+
 -- Create connection pool. Accepts pg connection params (host, port, user,
 -- password, dbname) separatelly or in one string, size and raise flag.
-local function pool_connect(opts)
+local function pool_create(opts)
     opts = opts or {}
+    local conn_string = build_conn_string(opts)
     opts.size = opts.size or 1
-    local conn_string
-    if opts.conn_string then
-        conn_string = opts.conn_string
-    else
-        local connb = {}
-        if opts.host then
-            table.insert(connb, string.format(" host='%s'", opts.host))
-        end
-        if opts.port then
-            table.insert(connb, string.format(" port='%s'", opts.port))
-        end
-        if opts.user then
-            table.insert(connb, string.format(" user='%s'", opts.user))
-        end
-        if opts.pass or opts.password then
-            table.insert(connb, string.format(" password='%s'",
-                opts.pass or opts.password))
-        end
-        if opts.db then
-            table.insert(connb, string.format(" dbname='%s'", opts.db))
-        end
-        conn_string = table.concat(connb)
-    end
-
     local queue = fiber.channel(opts.size)
 
     for i = 1, opts.size do
-        local conn, msg = pg_connect(conn_string)
-        if conn == nil then
+        local status, conn = driver.connect(conn_string)
+        if status < 0 then
             while queue:count() > 0 do
-                local conn = queue:get()
-                close(conn)
+                local pg_conn = queue:get()
+                pg_conn:close()
             end
-            return pool_error(self, msg)
+            if status == -1 then
+                return pool_error(self, msg)
+            else
+                return -2
+            end
         end
         queue:put(conn)
     end
@@ -214,13 +221,15 @@ end
 local function pool_close(self)
     self.usable = false
     for i = 1, self.size do
-        local conn = self.queue:get()
-        conn.close(conn)
+        local pg_conn = self.queue:get()
+        if pg_conn ~= nil then
+            pg_conn:close()
+        end
     end
     return 1
 end
 
--- Returns cursor (contains connection) connection
+-- Returns connection
 local function pool_get(self)
     if not self.usable then
         return pool_error(self, 'Pool is not usable')
@@ -249,6 +258,24 @@ pool_mt = {
     }
 }
 
+-- Create connection. Accepts pg connection params (host, port, user,
+-- password, dbname) separatelly or in one string and raise flag.
+local function connect(opts)
+    opts = opts or {}
+    local pool = {virtual = true, raise = opts.raise}
+
+    local conn_string = build_conn_string(opts)
+    local status, pg_conn = driver.connect(conn_string)
+    if status == -1 then
+        return pool_error(pool, pg_conn)
+    end
+    if status == -2 then
+        return -2
+    end
+    return conn_create(pg_conn, pool)
+end
+
 return {
-    connect = pool_connect;
+    connect = connect;
+    pool_create = pool_create;
 }

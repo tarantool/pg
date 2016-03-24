@@ -11,13 +11,16 @@ local f = require('fiber')
 local host, port, user, pass, db = string.match(os.getenv('PG') or '',
     "([^:]*):([^:]*):([^:]*):([^:]*):([^:]*)")
 
-p, msg = pg.connect({ host = host, port = port, user = user, pass = pass, 
+local p, msg = pg.pool_create({ host = host, port = port, user = user, pass = pass, 
     db = db, raise = false, size = 2 })
-
 if p == nil then error(msg) end
 
+local conn, msg = pg.connect({ host = host, port = port, user = user, pass = pass, 
+    db = db, raise = false})
+if conn == nil then error(msg) end
+
 function test_old_api(t, c)
-    t:plan(15)
+    t:plan(14)
     t:ok(c ~= nil, "connection")
     -- Add an extension to 'tap' module
     getmetatable(t).__index.q = function(test, stmt, result, ...)
@@ -42,7 +45,6 @@ function test_old_api(t, c)
         { column1 = 1, column2 = 2}, { column1 = 2, column2 = 3}})
 
     t:test("tx", function(t)
-        t:plan(7)
         if not c:execute("CREATE TABLE _tx_test (a int)") then
             return
         end
@@ -61,7 +63,6 @@ function test_old_api(t, c)
         c:execute("DROP TABLE _tx_test")
     end)
 
-    t:q('DROP TABLE IF EXISTS unknown_table', {})
     local tuples, reason = c:execute('DROP TABLE unknown_table')
     t:like(reason, 'unknown_table', 'error')
 end
@@ -114,9 +115,10 @@ function test_pg_int64(t, p)
     p:put(conn)
 end
 
-conn = p:get()
 tap.test('connection old api', test_old_api, conn)
-p:put(conn)
+local pool_conn = p:get()
+tap.test('connection old api via pool', test_old_api, pool_conn)
+p:put(pool_conn)
 tap.test('test collection connections', test_gc, p)
 tap.test('connection concurrent', test_conn_concurrent, p)
 tap.test('int64', test_pg_int64, p)
