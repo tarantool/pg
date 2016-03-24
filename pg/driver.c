@@ -45,128 +45,110 @@
 #define BOOLOID 16
 #define TEXTOID 25
 
-static inline PGconn *
-lua_check_pgconn_nothrow(struct lua_State *L, int index)
+#include <stdint.h>
+
+/**
+ * Infinity timeout from tarantool_ev.c. I mean, this should be in
+ * a module.h file.
+ */
+#define TIMEOUT_INFINITY 365 * 86400 * 100.0
+static const char pg_driver_label[] = "__tnt_pg_driver";
+
+static int
+save_pushstring_wrapped(struct lua_State *L)
 {
-	return *(PGconn **) luaL_checkudata(L, index, "pg");
+	char *str = (char *)lua_topointer(L, 1);
+	lua_pushstring(L, str);
+	return 1;
+}
+
+static int
+safe_pushstring(struct lua_State *L, char *str)
+{
+	lua_pushcfunction(L, save_pushstring_wrapped);
+	lua_pushlightuserdata(L, str);
+	return lua_pcall(L, 1, 1, 0);
 }
 
 static inline PGconn *
 lua_check_pgconn(struct lua_State *L, int index)
 {
-	PGconn *conn = lua_check_pgconn_nothrow(L, index);
-	if (conn == NULL)
-		luaL_error(L, "Attempt to use closed connection");
-	return conn;
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, index, pg_driver_label);
+	if (conn_p == NULL || *conn_p == NULL)
+		luaL_error(L, "Driver fatal error (No connection)");
+	return *conn_p;
 }
 
-/** do execute request (is run in the other thread) */
-static ssize_t
-pg_exec(va_list ap)
-{
-	PGconn *conn			= va_arg(ap, PGconn*);
-	const char *sql			= va_arg(ap, const char*);
-	int count			= va_arg(ap, int);
-	Oid *paramTypes			= va_arg(ap, Oid*);
-	const char **paramValues	= va_arg(ap, const char**);
-	const int *paramLengths		= va_arg(ap, int*);
-	const int *paramFormats		= va_arg(ap, int*);
-	PGresult **res			= va_arg(ap, PGresult**);
-
-	*res = PQexecParams(conn, sql,
-		count, paramTypes, paramValues, paramLengths, paramFormats, 0);
-	return 0;
-}
-
-
-/** push query result into lua stack */
+/**
+ * Parse pg values to lua
+ */
 static int
-lua_pg_pushresult(struct lua_State *L, PGresult *r)
+parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 {
-	if (!r)
-		luaL_error(L, "PG internal error: zero rults");
+	if (PQgetisnull(res, row, col))
+		return false;
+	// Procedure called in pcall environment, don't use safe_pushstring
+	lua_pushstring(L, PQfname(res, col));
+	const char *val = PQgetvalue(res, row, col);
+	int len = PQgetlength(res, row, col);
 
-	switch(PQresultStatus(r)) {
-	case PGRES_COMMAND_OK:
-		lua_newtable(L);
-		if (*PQcmdTuples(r) == 0) {
-			lua_pushnumber(L, 0);
-		} else {
-			lua_pushstring(L, PQcmdTuples(r));
+	switch (PQftype(res, col)) {
+		case INT2OID:
+		case INT4OID:
+		case NUMERICOID: {
+			lua_pushlstring(L, val, len);
 			double v = lua_tonumber(L, -1);
 			lua_pop(L, 1);
 			lua_pushnumber(L, v);
+			break;
 		}
-		lua_pushstring(L, PQcmdStatus(r));
-		PQclear(r);
-		return 3;
-
-	case PGRES_TUPLES_OK:
-		break;
-
-	case PGRES_BAD_RESPONSE:
-		PQclear(r);
-		luaL_error(L, "Broken postgresql response");
-		return 0;
-
-	case PGRES_FATAL_ERROR:
-	case PGRES_NONFATAL_ERROR:
-	case PGRES_EMPTY_QUERY:
-		lua_pushstring(L, PQresultErrorMessage(r));
-		PQclear(r);
-		luaL_error(L, "%s", lua_tostring(L, -1));
-		return 0;
-
-	default:
-		luaL_error(L, "pg: unsupported result type");
-		return 0;
+		case INT8OID: {
+			long long v = strtoll(val, NULL, 10);
+			luaL_pushint64(L, v);
+			break;
+		}
+		case BOOLOID:
+			if (*val == 't' || *val == 'T')
+				lua_pushboolean(L, 1);
+			else
+				lua_pushboolean(L, 0);
+			break;
+		default:
+			lua_pushlstring(L, val, len);
 	}
+	return true;
+}
 
+/**
+ * Push query result tuples to given table on lua stack
+ */
+static int
+safe_pg_parsetuples(struct lua_State *L)
+{
+	PGresult *res = (PGresult *)lua_topointer(L, 1);
+	int row, rows = PQntuples(res);
+	int col, cols = PQnfields(res);
 	lua_newtable(L);
-	int count = PQntuples(r);
-	int cols = PQnfields(r);
-	int i;
-	for (i = 0; i < count; i++) {
-		lua_pushnumber(L, i + 1);
+	for (row = 0; row < rows; ++row) {
+		lua_pushnumber(L, row + 1);
 		lua_newtable(L);
-		int j;
-		for (j = 0; j < cols; j++) {
-			if (PQgetisnull(r, i, j))
-				continue;
-			lua_pushstring(L, PQfname(r, j));
-			const char *s = PQgetvalue(r, i, j);
-			int len = PQgetlength(r, i, j);
-
-			switch (PQftype(r, j)) {
-				case INT2OID:
-				case INT4OID:
-				case NUMERICOID: {
-					lua_pushlstring(L, s, len);
-					double v = lua_tonumber(L, -1);
-					lua_pop(L, 1);
-					lua_pushnumber(L, v);
-					break;
-				}
-				case INT8OID: {
-					long long v = strtoll(s, NULL, 0);
-					luaL_pushint64(L, v);
-					break;
-				}
-				case BOOLOID:
-					if (*s == 't' || *s == 'T')
-						lua_pushboolean(L, 1);
-					else
-						lua_pushboolean(L, 0);
-					break;
-				default:
-					lua_pushlstring(L, s, len);
-					break;
-			}
-			lua_settable(L, -3);
-		}
+		for (col = 0; col < cols; ++col)
+			if (parse_pg_value(L, res, row, col))
+				lua_settable(L, -3);
 		lua_settable(L, -3);
 	}
+	return 1;
+}
 
+/**
+ * Push query execution status to lua stack
+ */
+static int
+safe_pg_parsestatus(struct lua_State *L)
+{
+	PGresult *r = (PGresult *)lua_topointer(L, 1);
+	lua_newtable(L);
+	lua_pushstring(L, "tuples");
 	if (*PQcmdTuples(r) == 0) {
 		lua_pushnumber(L, 0);
 	} else {
@@ -175,142 +157,235 @@ lua_pg_pushresult(struct lua_State *L, PGresult *r)
 		lua_pop(L, 1);
 		lua_pushnumber(L, v);
 	}
+	lua_settable(L, -3);
+	lua_pushstring(L, "message");
 	lua_pushstring(L, PQcmdStatus(r));
-	PQclear(r);
-	return 3;
-}
-
-
-/** execute method */
-static int
-lua_pg_execute(struct lua_State *L)
-{
-	PGconn *conn = lua_check_pgconn(L, 1);
-	const char *sql = lua_tostring(L, 2);
-
-	int count = lua_gettop(L) - 2;
-	const char **paramValues = NULL;
-	int  *paramLengths = NULL;
-	int  *paramFormats = NULL;
-	Oid *paramTypes = NULL;
-
-	if (count > 0) {
-		/* Allocate memory for params using lua_newuserdata */
-		char *buf = (char *) lua_newuserdata(L, count *
-			(sizeof(*paramValues) + sizeof(*paramLengths) +
-			 sizeof(*paramFormats) + sizeof(*paramTypes)));
-
-		paramValues = (const char **) buf;
-		buf += count * sizeof(*paramValues);
-		paramLengths = (int *) buf;
-		buf += count * sizeof(*paramLengths);
-		paramFormats = (int *) buf;
-		buf += count * sizeof(*paramFormats);
-		paramTypes = (Oid *) buf;
-		buf += count * sizeof(*paramTypes);
-
-		int i, j, idx;
-		for(i = 0, idx = 3; i < count; i++, idx++) {
-			if (lua_isnil(L, idx)) {
-				paramValues[i] = NULL;
-				paramLengths[i] = 0;
-				paramFormats[i] = 0;
-				paramTypes[i] = 0;
-				continue;
-			}
-
-			if (lua_isboolean(L, idx)) {
-				int v = lua_toboolean(L, idx);
-				static const char pg_true[] = "t";
-				static const char pg_false[] = "f";
-				paramValues[i] = v ? pg_true : pg_false;
-				paramLengths[i] = 1;
-				paramFormats[i] = 0;
-				paramTypes[i] = BOOLOID;
-				continue;
-			}
-
-			size_t len;
-			const char *s = lua_tolstring(L, idx, &len);
-
-			if (lua_isnumber(L, idx)) {
-				paramTypes[i] = NUMERICOID;
-				paramValues[i] = s;
-				paramLengths[i] = len;
-				paramFormats[i] = 0;
-				continue;
-			}
-
-			paramValues[i] = s;
-			paramLengths[i] = len;
-			paramFormats[i] = 0;
-			paramTypes[i] = TEXTOID;
-		}
-
-		/* transform sql placeholders */
-		luaL_Buffer b;
-		luaL_buffinit(L, &b);
-		char num[10];
-		for (i = 0, j = 1; sql[i]; i++) {
-			if (sql[i] != '?') {
-				luaL_addchar(&b, sql[i]);
-				continue;
-			}
-			luaL_addchar(&b, '$');
-
-			snprintf(num, 10, "%d", j++);
-			luaL_addstring(&b, num);
-		}
-		luaL_pushresult(&b);
-		sql = lua_tostring(L, -1);
-	}
-
-	static int running = 0;
-
-	PGresult *res = NULL;
-	/* PQconn can't be shared between threads */
-	assert(!running); /* checked by Lua */
-	running = 1;
-	if (coio_call(pg_exec, conn,
-			sql, count, paramTypes, paramValues,
-			paramLengths, paramFormats, &res) == -1) {
-
-		luaL_error(L, "Can't execute sql: %s",
-			strerror(errno));
-	}
-	running = 0;
-
-	lua_settop(L, 0);
-	return lua_pg_pushresult(L, res);
+	lua_settable(L, -3);
+	return 1;
 }
 
 /**
- * close connection
+ * Wait until postgres returns something
+ */
+static int
+pg_wait_for_result(PGconn *conn)
+{
+	int sock = PQsocket(conn);
+	while (true) {
+		if (fiber_is_cancelled())
+			return -2;
+		if (PQconsumeInput(conn) != 1)
+			return PQstatus(conn) == CONNECTION_BAD ? -1: 0;
+		if (PQisBusy(conn))
+			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
+		else
+			break;
+	}
+	return 1;
+}
+
+/**
+ * Appends result fom postgres to lua table
+ */
+static int
+lua_pg_resultget(struct lua_State *L)
+{
+	PGconn *conn = lua_check_pgconn(L, 1);
+
+	int wait_res = pg_wait_for_result(conn);
+	if (wait_res != 1)
+	{
+		lua_pushinteger(L, wait_res);
+		lua_pushstring(L, PQerrorMessage(conn));
+		return 2;
+	}
+
+	PGresult *res = PQgetResult(conn);
+	if (!res) {
+		lua_pushnil(L);
+		return 1;
+	}
+	int fail = 0;
+	int return_tuples = 0;
+	int status = PQresultStatus(res);
+	switch (status) {
+		case PGRES_TUPLES_OK:
+		case PGRES_SINGLE_TUPLE:
+			lua_pushinteger(L, 1);
+			lua_pushcfunction(L, safe_pg_parsestatus);
+			lua_pushlightuserdata(L, res);
+			if ((fail = lua_pcall(L, 1, 1, 0)))
+				break;
+			lua_pushcfunction(L, safe_pg_parsetuples);
+			lua_pushlightuserdata(L, res);
+			fail = lua_pcall(L, 1, 1, 0);
+			return_tuples = 1;
+			break;
+		case PGRES_COMMAND_OK:
+			lua_pushinteger(L, 1);
+			lua_pushcfunction(L, safe_pg_parsestatus);
+			lua_pushlightuserdata(L, res);
+			fail = lua_pcall(L, 1, 1, 0);
+			break;
+		case PGRES_FATAL_ERROR:
+		case PGRES_EMPTY_QUERY:
+		case PGRES_NONFATAL_ERROR:
+			lua_pushinteger(L,
+				(PQstatus(conn) == CONNECTION_BAD) ? -1: 0);
+			fail = safe_pushstring(L, PQerrorMessage(conn));
+			break;
+		default:
+			lua_pushinteger(L, -1);
+			fail = safe_pushstring(L,
+				"Unwanted execution result status");
+	}
+
+	PQclear(res);
+	if (fail)
+		return lua_error(L);
+	return 2 + return_tuples;
+}
+
+/**
+ * Parse lua value
+ */
+static void
+parse_lua_param(struct lua_State *L,
+	int idx, const char **value, int *length, Oid *type)
+{
+	if (lua_isnil(L, idx)) {
+		*value = NULL;
+		*length = 0;
+		*type = 0;
+		return;
+	}
+
+	if (lua_isboolean(L, idx)) {
+		static const char pg_true[] = "t";
+		static const char pg_false[] = "f";
+		*value = lua_toboolean(L, idx) ? pg_true : pg_false;
+		*length = 1;
+		*type = BOOLOID;
+		return;
+	}
+
+	if (lua_isnumber(L, idx)) {
+		size_t len;
+		*value = lua_tolstring(L, idx, &len);
+		*length = len;
+		*type = NUMERICOID;
+		return;
+	}
+
+	// We will pass all other types as strings
+	size_t len;
+	*value = lua_tolstring(L, idx, &len);
+	*length = len;
+	*type = TEXTOID;
+}
+
+/**
+ * Start query execution
+ */
+static int
+lua_pg_sendquery(struct lua_State *L)
+{
+	PGconn *conn = lua_check_pgconn(L, 1);
+	if (!lua_isstring(L, 2)) {
+		safe_pushstring(L, "Second param should be a sql command");
+		return lua_error(L);
+	}
+	const char *sql = lua_tostring(L, 2);
+	int paramCount = lua_gettop(L) - 2;
+
+	const char **paramValues = NULL;
+	int  *paramLengths = NULL;
+	Oid *paramTypes = NULL;
+
+	int res = 0;
+	if (paramCount > 0) {
+		/* Allocate chunk of memory for params */
+		char *buf = (char *)lua_newuserdata(L, paramCount *
+			(sizeof(*paramValues) + sizeof(*paramLengths) +
+			 sizeof(*paramTypes)));
+
+		paramValues = (const char **) buf;
+		buf += paramCount * sizeof(*paramValues);
+		paramLengths = (int *) buf;
+		buf += paramCount * sizeof(*paramLengths);
+		paramTypes = (Oid *) buf;
+
+		int idx;
+		for (idx = 0; idx < paramCount; ++idx) {
+			parse_lua_param(L, idx + 3, paramValues + idx,
+				paramLengths + idx, paramTypes + idx);
+		}
+		res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
+			paramValues, paramLengths, NULL, 0);
+	}
+	else
+		res = PQsendQuery(conn, sql);
+
+	if (res == -1) {
+		lua_pushinteger(L, PQstatus(conn) == CONNECTION_BAD ? -1: 0);
+		lua_pushstring(L, PQerrorMessage(conn));
+		return 2;
+	}
+	lua_pushinteger(L, 1);
+
+	return 1;
+}
+
+/**
+ * Test that connection has active transaction
+ */
+static int
+lua_pg_transaction_active(struct lua_State *L)
+{
+	PGconn *conn = lua_check_pgconn(L, 1);
+	PGTransactionStatusType status;
+	switch (status = PQtransactionStatus(conn)){
+		case PQTRANS_IDLE:
+		case PQTRANS_ACTIVE:
+		case PQTRANS_INTRANS:
+		case PQTRANS_INERROR:
+			lua_pushinteger(L, 1);
+			lua_pushboolean(L, status != PQTRANS_IDLE);
+			return 2;
+		default:
+			lua_pushinteger(L, -1);
+			lua_pushstring(L, PQerrorMessage(conn));
+			return 2;
+	}
+}
+
+/**
+ * Close connection
  */
 static int
 lua_pg_close(struct lua_State *L)
 {
-	PGconn **pconn = (PGconn **) luaL_checkudata(L, 1, "pg");
-	if (*pconn == NULL) {
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, pg_driver_label);
+	if (conn_p == NULL || *conn_p == NULL) {
 		lua_pushboolean(L, 0);
 		return 1;
 	}
-	PQfinish(*pconn);
-	*pconn = NULL;
+	PQfinish(*conn_p);
+	*conn_p = NULL;
 	lua_pushboolean(L, 1);
 	return 1;
 }
 
 /**
- * collect connection
+ * Collect connection
  */
 static int
 lua_pg_gc(struct lua_State *L)
 {
-	PGconn **pconn = (PGconn **) luaL_checkudata(L, 1, "pg");
-	if (*pconn != NULL)
-		PQfinish(*pconn);
-	*pconn = NULL;
+	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, pg_driver_label);
+	if (conn_p && *conn_p)
+		PQfinish(*conn_p);
+	*conn_p = NULL;
 	return 0;
 }
 
@@ -323,7 +398,7 @@ lua_pg_tostring(struct lua_State *L)
 }
 
 /**
- * prints warnings from Postgresql into tarantool log
+ * Prints warnings from Postgresql into tarantool log
  */
 static void
 pg_notice(void *arg, const char *message)
@@ -333,21 +408,7 @@ pg_notice(void *arg, const char *message)
 }
 
 /**
- * do connect to postgresql (is run in the other thread)
- */
-static ssize_t
-pg_connect(va_list ap)
-{
-	const char *constr = va_arg(ap, const char*);
-	PGconn **conn = va_arg(ap, PGconn**);
-	*conn = PQconnectdb(constr);
-	if (*conn)
-		PQsetNoticeProcessor(*conn, pg_notice, NULL);
-	return 0;
-}
-
-/**
- * quote variable
+ * Quote variable
  */
 static int
 lua_pg_quote(struct lua_State *L)
@@ -358,19 +419,19 @@ lua_pg_quote(struct lua_State *L)
 	}
 	PGconn *conn = lua_check_pgconn(L, 1);
 	size_t len;
-	const char *s = lua_tolstring(L, -1, &len);
+	const char *s = lua_tolstring(L, 2, &len);
 
 	s = PQescapeLiteral(conn, s, len);
 
 	if (!s)
 		luaL_error(L, "Can't allocate memory");
-	lua_pushstring(L, s);
+	int fail = safe_pushstring(L, (char *)s);
 	free((void *)s);
-	return 1;
+	return fail ? lua_error(L): 1;
 }
 
 /**
- * quote identifier
+ * Quote identifier
  */
 static int
 lua_pg_quote_ident(struct lua_State *L)
@@ -381,76 +442,103 @@ lua_pg_quote_ident(struct lua_State *L)
 	}
 	PGconn *conn = lua_check_pgconn(L, 1);
 	size_t len;
-	const char *s = lua_tolstring(L, -1, &len);
+	const char *s = lua_tolstring(L, 2, &len);
 
 	s = PQescapeIdentifier(conn, s, len);
 
 	if (!s)
 		luaL_error(L, "Can't allocate memory");
-	lua_pushstring(L, s);
+	int fail = safe_pushstring(L, (char *)s);
 	free((void *)s);
-	return 1;
+	return fail ? lua_error(L): 1;
 }
 
 /**
- * connect to postgresql
+ * Start connection to postgresql
  */
 static int
-lbox_net_pg_connect(struct lua_State *L)
+lua_pg_connect(struct lua_State *L)
 {
-	if (lua_gettop(L) < 1 || !lua_isstring(L, 1))
+	if (lua_gettop(L) != 1 || !lua_isstring(L, 1))
 		luaL_error(L, "Usage: pg.connect(connstring)");
 
 	const char *constr = lua_tostring(L, 1);
 	PGconn *conn = NULL;
 
-	if (coio_call(pg_connect, constr, &conn) == -1) {
-		luaL_error(L, "Can't connect to postgresql: %s",
-			strerror(errno));
+	conn = PQconnectStart(constr);
+	if (!conn) {
+		lua_pushinteger(L, -1);
+		int fail = safe_pushstring(L,
+			"Can't allocate PG connection structure");
+		return fail ? lua_error(L): 2;
 	}
 
-	if (PQstatus(conn) != CONNECTION_OK) {
-		luaL_Buffer b;
-		luaL_buffinit(L, &b);
-		luaL_addstring(&b, PQerrorMessage(conn));
-		luaL_pushresult(&b);
+	if (PQstatus(conn) == CONNECTION_BAD) {
+		lua_pushinteger(L, -1);
+		int fail = safe_pushstring(L, PQerrorMessage(conn));
 		PQfinish(conn);
-		lua_error(L);
+		return fail ? lua_error(L): 2;
 	}
 
-	lua_pushboolean(L, 1);
-	PGconn **ptr = (PGconn **)lua_newuserdata(L, sizeof(conn));
-	*ptr = conn;
-	luaL_getmetatable(L, "pg");
-	lua_setmetatable(L, -2);
-
-	return 2;
+	int sock = PQsocket(conn);
+	while (true) {
+		if (fiber_is_cancelled()) {
+			lua_pushinteger(L, -2);
+			return 1;
+		}
+		PostgresPollingStatusType status = PQconnectPoll(conn);
+		if (status == PGRES_POLLING_OK) {
+			PQsetNoticeProcessor(conn, pg_notice, NULL);
+			lua_pushinteger(L, 1);
+			PGconn **conn_p = (PGconn **)
+				lua_newuserdata(L, sizeof(conn));
+			*conn_p = conn;
+			luaL_getmetatable(L, pg_driver_label);
+			lua_setmetatable(L, -2);
+			return 2;
+		}
+		if (status == PGRES_POLLING_READING) {
+			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
+			continue;
+		}
+		if (status == PGRES_POLLING_WRITING) {
+			coio_wait(sock, COIO_WRITE, TIMEOUT_INFINITY);
+			continue;
+		}
+		break;
+	}
+	lua_pushinteger(L, -1);
+	int fail = safe_pushstring(L, PQerrorMessage(conn));
+	PQfinish(conn);
+	return fail ? lua_error(L): 2;
 }
 
 LUA_API int
 luaopen_pg_driver(lua_State *L)
 {
 	static const struct luaL_reg methods [] = {
-		{"execute",	lua_pg_execute},
+		{"sendquery",	lua_pg_sendquery},
+		{"resultget",	lua_pg_resultget},
 		{"quote",	lua_pg_quote},
 		{"quote_ident",	lua_pg_quote_ident},
 		{"close",	lua_pg_close},
+		{"active",	lua_pg_transaction_active},
 		{"__tostring",	lua_pg_tostring},
 		{"__gc",	lua_pg_gc},
 		{NULL, NULL}
 	};
 
-	luaL_newmetatable(L, "pg");
+	luaL_newmetatable(L, pg_driver_label);
 	lua_pushvalue(L, -1);
 	luaL_register(L, NULL, methods);
 	lua_setfield(L, -2, "__index");
-	lua_pushstring(L, "pg");
+	lua_pushstring(L, pg_driver_label);
 	lua_setfield(L, -2, "__metatable");
 	lua_pop(L, 1);
 
 	lua_newtable(L);
 	static const struct luaL_reg meta [] = {
-		{"connect", lbox_net_pg_connect},
+		{"connect", lua_pg_connect},
 		{NULL, NULL}
 	};
 	luaL_register(L, NULL, meta);
