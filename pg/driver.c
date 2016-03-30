@@ -26,8 +26,6 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <module.h>
-
 #include <stddef.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -37,6 +35,7 @@
 #include <lauxlib.h>
 
 #include <libpq-fe.h>
+#include <pg_config.h>
 /* PostgreSQL types (see catalog/pg_type.h) */
 #define INT2OID 21
 #define INT4OID 23
@@ -46,6 +45,9 @@
 #define TEXTOID 25
 
 #include <stdint.h>
+
+#undef PACKAGE_VERSION
+#include <module.h>
 
 /**
  * Infinity timeout from tarantool_ev.c. I mean, this should be in
@@ -210,7 +212,6 @@ lua_pg_resultget(struct lua_State *L)
 	int status = PQresultStatus(res);
 	switch (status) {
 		case PGRES_TUPLES_OK:
-		case PGRES_SINGLE_TUPLE:
 			lua_pushinteger(L, 1);
 			lua_pushcfunction(L, safe_pg_parsestatus);
 			lua_pushlightuserdata(L, res);
@@ -407,6 +408,7 @@ pg_notice(void *arg, const char *message)
 	(void)arg;
 }
 
+#if PG_VERSION_NUM >= 90000
 /**
  * Quote variable
  */
@@ -452,6 +454,8 @@ lua_pg_quote_ident(struct lua_State *L)
 	free((void *)s);
 	return fail ? lua_error(L): 1;
 }
+
+#endif
 
 /**
  * Start connection to postgresql
@@ -519,8 +523,10 @@ luaopen_pg_driver(lua_State *L)
 	static const struct luaL_reg methods [] = {
 		{"sendquery",	lua_pg_sendquery},
 		{"resultget",	lua_pg_resultget},
+#if PG_VERSION_NUM >= 90000
 		{"quote",	lua_pg_quote},
 		{"quote_ident",	lua_pg_quote_ident},
+#endif
 		{"close",	lua_pg_close},
 		{"active",	lua_pg_transaction_active},
 		{"__tostring",	lua_pg_tostring},
