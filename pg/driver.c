@@ -77,7 +77,8 @@ lua_check_pgconn(struct lua_State *L, int index)
 {
 	PGconn **conn_p = (PGconn **)luaL_checkudata(L, index, pg_driver_label);
 	if (conn_p == NULL || *conn_p == NULL)
-		luaL_error(L, "Driver fatal error (No connection)");
+		luaL_error(L, "Driver fatal error (closed connection "
+			   "or not a connection)");
 	return *conn_p;
 }
 
@@ -118,6 +119,7 @@ parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 		default:
 			lua_pushlstring(L, val, len);
 	}
+	lua_settable(L, -3);
 	return true;
 }
 
@@ -135,8 +137,7 @@ safe_pg_parsetuples(struct lua_State *L)
 		lua_pushnumber(L, row + 1);
 		lua_newtable(L);
 		for (col = 0; col < cols; ++col)
-			if (parse_pg_value(L, res, row, col))
-				lua_settable(L, -3);
+			parse_pg_value(L, res, row, col);
 		lua_settable(L, -3);
 	}
 	return 1;
@@ -251,7 +252,7 @@ lua_pg_resultget(struct lua_State *L)
  * Parse lua value
  */
 static void
-parse_lua_param(struct lua_State *L,
+lua_parse_param(struct lua_State *L,
 	int idx, const char **value, int *length, Oid *type)
 {
 	if (lua_isnil(L, idx)) {
@@ -318,7 +319,7 @@ lua_pg_sendquery(struct lua_State *L)
 
 		int idx;
 		for (idx = 0; idx < paramCount; ++idx) {
-			parse_lua_param(L, idx + 3, paramValues + idx,
+			lua_parse_param(L, idx + 3, paramValues + idx,
 				paramLengths + idx, paramTypes + idx);
 		}
 		res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
@@ -386,7 +387,8 @@ lua_pg_gc(struct lua_State *L)
 	PGconn **conn_p = (PGconn **)luaL_checkudata(L, 1, pg_driver_label);
 	if (conn_p && *conn_p)
 		PQfinish(*conn_p);
-	*conn_p = NULL;
+	if (conn_p)
+		*conn_p = NULL;
 	return 0;
 }
 
