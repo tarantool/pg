@@ -503,6 +503,7 @@ lua_pg_connect(struct lua_State *L)
 	while (true) {
 		if (fiber_is_cancelled()) {
 			lua_pushinteger(L, -2);
+			safe_pushstring(L, "Fiber was cancelled");
 			return 1;
 		}
 		PostgresPollingStatusType status = PQconnectPoll(conn);
