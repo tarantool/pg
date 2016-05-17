@@ -54,30 +54,26 @@ Connect to a database.
  - `db` - a database name
  - `connstring` (mutual exclusive with host, port, user, pass, db) - PostgreSQL
    [connection string][PQconnstring]
- - `raise` = false - raise an exceptions instead of returning nil, reason in
-   all API functions
 
 *Returns*:
 
  - `connection ~= nil` on success
- - `nil, reason` on error if `raise` is false
- - `error(reason)` on error if `raise` is true
+ - `error(reason)` on error
 
 ### `conn:execute(statement, ...)`
 
 Execute a statement with arguments in the current transaction.
 
 *Returns*:
- - `{ { column1 = value, column2 = value }, ... }` on success
- - `nil, reason` on error if `raise` is false
- - `error(reason)` on error if `raise` is true
+ - `{ { { column1 = value, column2 = value }, ... }, { {column1 = value, ... }, ...}, ...}, true` on success
+ - `error(reason)` on error
 
 *Example*:
 ```
 tarantool> conn:execute("SELECT ? AS a, 'xx' AS b", 42)
 ---
-- - a: 42
-    b: xx
+- - - a: 42
+      b: xx
     ...
 ```
 
@@ -108,7 +104,50 @@ Execute a dummy statement to check that connection is alive.
  - `true` on success
  - `false` on failure
 
-## See Also
+#### `pool = pg.pool_create(opts = {})`
+
+Create a connection pool with count of size established connections.
+
+*Options*:
+
+ - `host` - hostname to connect to
+ - `port` - port number to connect to
+ - `user` - username
+ - `password` - password
+ - `db` - database name
+ - `size` - count of connections in pool
+
+*Returns*
+
+ - `pool ~=nil` on success
+ - `error(reason)` on error
+
+### `conn = pool:get()`
+
+Get a connection from pool. Reset connection before returning it. If connection
+is broken then it will be reestablished. If there is no free connections then
+calling fiber will sleep until another fiber returns some connection to pool.
+
+*Returns*:
+
+ - `conn ~= nil`
+ 
+### `pool:put(conn)`
+
+Return a connection to connection pool.
+
+*Options*
+
+ - `conn` - a connection
+
+## Comments
+
+All calls to connections api will be serialized, so it should to be safe to
+use one connection from some count of fibers. But you should understand,
+that you can have some unwanted behavior across db calls, for example if
+another fiber 'injects' some sql between two your calls.
+
+# See Also
 
  * [Tests][]
  * [Tarantool][]

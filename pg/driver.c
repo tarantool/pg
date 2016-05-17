@@ -83,6 +83,17 @@ lua_check_pgconn(struct lua_State *L, int index)
 }
 
 /**
+ * Push native lua error with code -3
+ */
+static int
+lua_push_error(struct lua_State *L)
+{
+	lua_pushnumber(L, -3);
+	lua_insert(L, -2);
+	return 2;
+}
+
+/**
  * Parse pg values to lua
  */
 static int
@@ -143,6 +154,8 @@ safe_pg_parsetuples(struct lua_State *L)
 	return 1;
 }
 
+#if 0
+Now we return only recordset without status
 /**
  * Push query execution status to lua stack
  */
@@ -166,6 +179,7 @@ safe_pg_parsestatus(struct lua_State *L)
 	lua_settable(L, -3);
 	return 1;
 }
+#endif
 
 /**
  * Wait until postgres returns something
@@ -191,49 +205,42 @@ pg_wait_for_result(PGconn *conn)
  * Appends result fom postgres to lua table
  */
 static int
-lua_pg_resultget(struct lua_State *L)
+pg_resultget(struct lua_State *L, PGconn *conn, int *res_no)
 {
-	PGconn *conn = lua_check_pgconn(L, 1);
-
 	int wait_res = pg_wait_for_result(conn);
 	if (wait_res != 1)
 	{
 		lua_pushinteger(L, wait_res);
-		lua_pushstring(L, PQerrorMessage(conn));
-		return 2;
+		if (wait_res == -2)
+			safe_pushstring(L, "Fiber was cancelled");
+		else
+			lua_pushstring(L, PQerrorMessage(conn));
+		return 0;
 	}
 
 	PGresult *res = PQgetResult(conn);
 	if (!res) {
-		lua_pushnil(L);
-		return 1;
+		return 0;
 	}
+	int ok = 0;
 	int fail = 0;
-	int return_tuples = 0;
 	int status = PQresultStatus(res);
 	switch (status) {
 		case PGRES_TUPLES_OK:
-			lua_pushinteger(L, 1);
-			lua_pushcfunction(L, safe_pg_parsestatus);
-			lua_pushlightuserdata(L, res);
-			if ((fail = lua_pcall(L, 1, 1, 0)))
-				break;
+			lua_pushinteger(L, (*res_no)++);
 			lua_pushcfunction(L, safe_pg_parsetuples);
 			lua_pushlightuserdata(L, res);
 			fail = lua_pcall(L, 1, 1, 0);
-			return_tuples = 1;
-			break;
+			if (!fail)
+				lua_settable(L, -3);
 		case PGRES_COMMAND_OK:
-			lua_pushinteger(L, 1);
-			lua_pushcfunction(L, safe_pg_parsestatus);
-			lua_pushlightuserdata(L, res);
-			fail = lua_pcall(L, 1, 1, 0);
+			ok = 1;
 			break;
 		case PGRES_FATAL_ERROR:
 		case PGRES_EMPTY_QUERY:
 		case PGRES_NONFATAL_ERROR:
 			lua_pushinteger(L,
-				(PQstatus(conn) == CONNECTION_BAD) ? -1: 0);
+				(PQstatus(conn) == CONNECTION_BAD) ? -1: 1);
 			fail = safe_pushstring(L, PQerrorMessage(conn));
 			break;
 		default:
@@ -243,9 +250,11 @@ lua_pg_resultget(struct lua_State *L)
 	}
 
 	PQclear(res);
-	if (fail)
-		return lua_error(L);
-	return 2 + return_tuples;
+	if (fail) {
+		lua_push_error(L);
+		ok = 0;
+	}
+	return ok;
 }
 
 /**
@@ -290,12 +299,12 @@ lua_parse_param(struct lua_State *L,
  * Start query execution
  */
 static int
-lua_pg_sendquery(struct lua_State *L)
+lua_pg_execute(struct lua_State *L)
 {
 	PGconn *conn = lua_check_pgconn(L, 1);
 	if (!lua_isstring(L, 2)) {
 		safe_pushstring(L, "Second param should be a sql command");
-		return lua_error(L);
+		return lua_push_error(L);
 	}
 	const char *sql = lua_tostring(L, 2);
 	int paramCount = lua_gettop(L) - 2;
@@ -333,9 +342,13 @@ lua_pg_sendquery(struct lua_State *L)
 		lua_pushstring(L, PQerrorMessage(conn));
 		return 2;
 	}
-	lua_pushinteger(L, 1);
+	lua_pushinteger(L, 0);
+	lua_newtable(L);
 
-	return 1;
+	int res_no = 1;
+	while (pg_resultget(L, conn, &res_no));
+
+	return 2;
 }
 
 /**
@@ -431,7 +444,7 @@ lua_pg_quote(struct lua_State *L)
 		luaL_error(L, "Can't allocate memory");
 	int fail = safe_pushstring(L, (char *)s);
 	free((void *)s);
-	return fail ? lua_error(L): 1;
+	return fail ? lua_push_error(L): 1;
 }
 
 /**
@@ -454,7 +467,7 @@ lua_pg_quote_ident(struct lua_State *L)
 		luaL_error(L, "Can't allocate memory");
 	int fail = safe_pushstring(L, (char *)s);
 	free((void *)s);
-	return fail ? lua_error(L): 1;
+	return fail ? lua_push_error(L): 1;
 }
 
 #endif
@@ -476,14 +489,14 @@ lua_pg_connect(struct lua_State *L)
 		lua_pushinteger(L, -1);
 		int fail = safe_pushstring(L,
 			"Can't allocate PG connection structure");
-		return fail ? lua_error(L): 2;
+		return fail ? lua_push_error(L): 2;
 	}
 
 	if (PQstatus(conn) == CONNECTION_BAD) {
 		lua_pushinteger(L, -1);
 		int fail = safe_pushstring(L, PQerrorMessage(conn));
 		PQfinish(conn);
-		return fail ? lua_error(L): 2;
+		return fail ? lua_push_error(L): 2;
 	}
 
 	int sock = PQsocket(conn);
@@ -516,15 +529,14 @@ lua_pg_connect(struct lua_State *L)
 	lua_pushinteger(L, -1);
 	int fail = safe_pushstring(L, PQerrorMessage(conn));
 	PQfinish(conn);
-	return fail ? lua_error(L): 2;
+	return fail ? lua_push_error(L): 2;
 }
 
 LUA_API int
 luaopen_pg_driver(lua_State *L)
 {
 	static const struct luaL_reg methods [] = {
-		{"sendquery",	lua_pg_sendquery},
-		{"resultget",	lua_pg_resultget},
+		{"execute",	lua_pg_execute},
 #if PG_VERSION_NUM >= 90000
 		{"quote",	lua_pg_quote},
 		{"quote_ident",	lua_pg_quote_ident},

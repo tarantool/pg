@@ -24,7 +24,7 @@ function test_old_api(t, c)
     t:ok(c ~= nil, "connection")
     -- Add an extension to 'tap' module
     getmetatable(t).__index.q = function(test, stmt, result, ...)
-        test:is_deeply(c:execute(stmt, ...), result,
+        test:is_deeply({c:execute(stmt, ...)}, {{result}, true},
             ... ~= nil and stmt..' % '..json.encode({...}) or stmt)
     end
     t:ok(c:ping(), "ping")
@@ -45,6 +45,7 @@ function test_old_api(t, c)
         { column1 = 1, column2 = 2}, { column1 = 2, column2 = 3}})
 
     t:test("tx", function(t)
+        t:plan(7)
         if not c:execute("CREATE TABLE _tx_test (a int)") then
             return
         end
@@ -63,7 +64,7 @@ function test_old_api(t, c)
         c:execute("DROP TABLE _tx_test")
     end)
 
-    local tuples, reason = c:execute('DROP TABLE unknown_table')
+    local status, reason = pcall(c.execute, c, 'DROP TABLE unknown_table')
     t:like(reason, 'unknown_table', 'error')
 end
 
@@ -103,7 +104,6 @@ function test_conn_concurrent(t, p)
     t:ok(f.time() - t1 >= 0.95, 'concurrent connections')
 end
 
-
 function test_pg_int64(t, p)
     t:plan(1)
     conn = p:get()
@@ -111,7 +111,7 @@ function test_pg_int64(t, p)
     conn:execute('insert into int64test values(1234567890123456789)')
     local r, m = conn:execute('select id from int64test')
     conn:execute('drop table int64test')
-    t:ok(r[1]['id'] == 1234567890123456789LL, 'int64 test')
+    t:ok(r[1][1]['id'] == 1234567890123456789LL, 'int64 test')
     p:put(conn)
 end
 
