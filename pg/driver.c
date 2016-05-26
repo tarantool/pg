@@ -205,7 +205,7 @@ pg_wait_for_result(PGconn *conn)
  * Appends result fom postgres to lua table
  */
 static int
-pg_resultget(struct lua_State *L, PGconn *conn, int *res_no)
+pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok)
 {
 	int wait_res = pg_wait_for_result(conn);
 	if (wait_res != 1)
@@ -218,23 +218,28 @@ pg_resultget(struct lua_State *L, PGconn *conn, int *res_no)
 		return 0;
 	}
 
-	PGresult *res = PQgetResult(conn);
-	if (!res) {
+	PGresult *pg_res = PQgetResult(conn);
+	if (!pg_res) {
 		return 0;
 	}
-	int ok = 0;
+	if (status_ok != 1) {
+		// Fail mode, just skip all other results
+		PQclear(pg_res);
+		return status_ok;
+	}
+	int res = -1;
 	int fail = 0;
-	int status = PQresultStatus(res);
+	int status = PQresultStatus(pg_res);
 	switch (status) {
 		case PGRES_TUPLES_OK:
 			lua_pushinteger(L, (*res_no)++);
 			lua_pushcfunction(L, safe_pg_parsetuples);
-			lua_pushlightuserdata(L, res);
+			lua_pushlightuserdata(L, pg_res);
 			fail = lua_pcall(L, 1, 1, 0);
 			if (!fail)
 				lua_settable(L, -3);
 		case PGRES_COMMAND_OK:
-			ok = 1;
+			res = 1;
 			break;
 		case PGRES_FATAL_ERROR:
 		case PGRES_EMPTY_QUERY:
@@ -249,12 +254,12 @@ pg_resultget(struct lua_State *L, PGconn *conn, int *res_no)
 				"Unwanted execution result status");
 	}
 
-	PQclear(res);
+	PQclear(pg_res);
 	if (fail) {
 		lua_push_error(L);
-		ok = 0;
+		res = -1;
 	}
-	return ok;
+	return res;
 }
 
 /**
@@ -346,7 +351,8 @@ lua_pg_execute(struct lua_State *L)
 	lua_newtable(L);
 
 	int res_no = 1;
-	while (pg_resultget(L, conn, &res_no));
+	int status_ok = 1;
+	while ((status_ok = pg_resultget(L, conn, &res_no, status_ok)));
 
 	return 2;
 }
