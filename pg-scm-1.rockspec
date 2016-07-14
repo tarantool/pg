@@ -12,14 +12,6 @@ description = {
 dependencies = {
     'lua >= 5.1'
 }
-external_dependencies = {
-    TARANTOOL = {
-        header = "tarantool/module.h"
-    },
-    POSTGRESQL = {
-        header = "postgresql/libpq-fe.h",
-    }
-}
 build = {
     type = 'cmake',
 }
