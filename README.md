@@ -33,7 +33,7 @@ See [tarantool/rocks][TarantoolRocks] for LuaRocks configuration details.
 ``` lua
 local pg = require('pg')
 local conn = pg.connect({host = localhost, user = 'user', pass = 'pass', db = 'db'})
-local tuples = conn:execute("SELECT ? AS a, 'xx' AS b", 42))
+local tuples = conn:execute("SELECT $1 AS a, 'xx' AS b", 42))
 conn:begin()
 conn:execute("INSERT INTO test VALUES(1, 2, 3)")
 conn:commit()
@@ -70,7 +70,7 @@ Execute a statement with arguments in the current transaction.
 
 *Example*:
 ```
-tarantool> conn:execute("SELECT ? AS a, 'xx' AS b", 42)
+tarantool> conn:execute("SELECT $1 AS a, 'xx' AS b", 42)
 ---
 - - - a: 42
       b: xx
