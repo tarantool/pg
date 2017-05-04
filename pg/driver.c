@@ -542,7 +542,7 @@ lua_pg_connect(struct lua_State *L)
 LUA_API int
 luaopen_pg_driver(lua_State *L)
 {
-	static const struct luaL_reg methods [] = {
+	static const struct luaL_Reg methods [] = {
 		{"execute",	lua_pg_execute},
 #if PG_VERSION_NUM >= 90000
 		{"quote",	lua_pg_quote},
@@ -564,7 +564,7 @@ luaopen_pg_driver(lua_State *L)
 	lua_pop(L, 1);
 
 	lua_newtable(L);
-	static const struct luaL_reg meta [] = {
+	static const struct luaL_Reg meta [] = {
 		{"connect", lua_pg_connect},
 		{NULL, NULL}
 	};
