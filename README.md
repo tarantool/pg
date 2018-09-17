@@ -52,7 +52,7 @@ Connect to a database.
  - `user` - username
  - `pass` or `password` - a password
  - `db` - a database name
- - `connstring` (mutual exclusive with host, port, user, pass, db) - PostgreSQL
+ - `conn_string` (mutual exclusive with host, port, user, pass, db) - PostgreSQL
    [connection string][PQconnstring]
 
 *Returns*:
