@@ -15,10 +15,13 @@ env:
       - OS=el DIST=7
       - OS=fedora DIST=24
       - OS=fedora DIST=25
+      - OS=fedora DIST=26
+      - OS=fedora DIST=27
       - OS=ubuntu DIST=precise
       - OS=ubuntu DIST=trusty
       - OS=ubuntu DIST=xenial
-      - OS=ubuntu DIST=yakkety
+      - OS=ubuntu DIST=artful
+      - OS=ubuntu DIST=bionic
       - OS=debian DIST=wheezy
       - OS=debian DIST=jessie
       - OS=debian DIST=stretch
@@ -29,10 +32,13 @@ env:
 #      - env: OS=el DIST=7
 #      - env: OS=fedora DIST=24
 #      - env: OS=fedora DIST=25
+#      - env: OS=fedora DIST=26
+#      - env: OS=fedora DIST=27
 #      - env: OS=ubuntu DIST=precise
 #      - env: OS=ubuntu DIST=trusty
 #      - env: OS=ubuntu DIST=xenial
-#      - env: OS=ubuntu DIST=yakkety
+#      - env: OS=ubuntu DIST=artful
+#      - env: OS=ubuntu DIST=bionic
 #      - env: OS=debian DIST=wheezy
 #      - env: OS=debian DIST=jessie
 #      - env: OS=debian DIST=stretch
