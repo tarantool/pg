@@ -285,7 +285,7 @@ lua_parse_param(struct lua_State *L,
 		return;
 	}
 
-	if (lua_isnumber(L, idx)) {
+	if (lua_type(L, idx) == LUA_TNUMBER) {
 		size_t len;
 		*value = lua_tolstring(L, idx, &len);
 		*length = len;

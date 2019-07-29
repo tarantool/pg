@@ -20,7 +20,7 @@ local conn, msg = pg.connect({ host = host, port = port, user = user, pass = pas
 if conn == nil then error(msg) end
 
 function test_old_api(t, c)
-    t:plan(14)
+    t:plan(15)
     t:ok(c ~= nil, "connection")
     -- Add an extension to 'tap' module
     getmetatable(t).__index.q = function(test, stmt, result, ...)
@@ -62,6 +62,20 @@ function test_old_api(t, c)
         t:q('SELECT * FROM _tx_test', {{ a  = 10 }})
 
         c:execute("DROP TABLE _tx_test")
+    end)
+
+    t:test("numeric string binding", function(t)
+        t:plan(1)
+        if not c:execute([[CREATE TABLE TEST1 ( TEST1_ID SERIAL PRIMARY KEY,
+                           TEST1_REQUESTID VARCHAR(32)
+                           NOT NULL DEFAULT '' );]]) then
+            return
+        end
+        c:execute('INSERT INTO TEST1 (TEST1_REQUESTID) VALUES ($1)', '12E30')
+        t:q('SELECT TEST1_REQUESTID FROM TEST1;',
+            {{ test1_requestid = '12E30'}})
+
+        c:execute("DROP TABLE TEST1")
     end)
 
     local status, reason = pcall(c.execute, c, 'DROP TABLE unknown_table')
