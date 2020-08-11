@@ -70,7 +70,7 @@ Execute a statement with arguments in the current transaction.
 
 *Example*:
 ```
-tarantool> conn:execute("SELECT ? AS a, 'xx' AS b", 42)
+tarantool> conn:execute("SELECT $1 AS a, 'xx' AS b", 42)
 ---
 - - - a: 42
       b: xx
