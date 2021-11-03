@@ -1,7 +1,7 @@
 package = 'pg'
 version = 'scm-1'
 source  = {
-    url    = 'git://github.com/tarantool/pg.git',
+    url    = 'git+https://github.com/tarantool/pg.git',
     branch = 'master',
 }
 description = {
