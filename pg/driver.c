@@ -108,8 +108,7 @@ parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 
 	switch (PQftype(res, col)) {
 		case INT2OID:
-		case INT4OID:
-		case NUMERICOID: {
+		case INT4OID: {
 			lua_pushlstring(L, val, len);
 			double v = lua_tonumber(L, -1);
 			lua_pop(L, 1);
@@ -127,6 +126,7 @@ parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 			else
 				lua_pushboolean(L, 0);
 			break;
+		//case NUMERICOID: // leave it as is (otherwise cast to decimal)
 		default:
 			lua_pushlstring(L, val, len);
 	}
@@ -291,6 +291,27 @@ lua_parse_param(struct lua_State *L,
 		*length = len;
 		*type = NUMERICOID;
 		return;
+	}
+
+	if (luaL_iscdata(L, idx)) {
+		uint32_t ctypeid = 0;
+		void *cdata = luaL_checkcdata(L, idx, &ctypeid);
+		static char buf[24];
+		int len = 0;
+		if (ctypeid == luaL_ctypeid(L, "int64_t")) {
+			len = snprintf(buf, sizeof(buf), "%ld", *(int64_t*)cdata);
+			*type = INT8OID;
+		}
+		else if (ctypeid == luaL_ctypeid(L, "uint64_t")) {
+			len = snprintf(buf, sizeof(buf), "%lu", *(uint64_t*)cdata);
+			*type = NUMERICOID;
+		}
+
+		if (len > 0) {
+			*value = buf;
+			*length = len;
+			return;
+		}
 	}
 
 	// We will pass all other types as strings
