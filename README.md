@@ -1,5 +1,7 @@
 # pg - PostgreSQL connector for [Tarantool][]
 
+[![Build and Test](https://github.com/tarantool/pg/actions/workflows/test.yml/badge.svg)](https://github.com/tarantool/pg/actions/workflows/test.yml)
+
 ## Getting Started
 
 ### Prerequisites
