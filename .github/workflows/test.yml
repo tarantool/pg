@@ -1,0 +1,47 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  run-tests-ce:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        tarantool: ['1.10', '2.5', '2.6', '2.7', '2.8', '2.x-latest']
+        postgres: [10, 11, 12, 13, 14]
+    runs-on: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Tarantool (version is not equal to latest 2.x)
+        if: matrix.tarantool != '2.x-latest'
+        uses: tarantool/setup-tarantool@v1
+        with:
+          tarantool-version: ${{ matrix.tarantool }}
+
+      - name: Setup Tarantool 2.x (latest)
+        if: matrix.tarantool == '2.x-latest'
+        run: |
+          curl -L https://tarantool.io/pre-release/2/installer.sh | sudo bash
+          sudo apt install -y tarantool tarantool-dev
+
+      - name: Setup requirements
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get -y install postgresql-${{ matrix.postgres }} libpq-dev
+
+      - name: Restart PostgreSQL service
+        run: sudo service postgresql restart
+
+      - name: Build module
+        run: cmake . && make
+
+      - name: Run tests
+        run: sudo -u postgres tarantool test/pg.test.lua
