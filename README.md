@@ -1,7 +1,5 @@
 # pg - PostgreSQL connector for [Tarantool][]
 
-[![Build Status](https://travis-ci.org/tarantool/pg.png?branch=master)](https://travis-ci.org/tarantool/pg)
-
 ## Getting Started
 
 ### Prerequisites
