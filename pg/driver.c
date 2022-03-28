@@ -505,14 +505,21 @@ lua_pg_connect(struct lua_State *L)
 		return fail ? lua_push_error(L): 2;
 	}
 
-	int sock = PQsocket(conn);
+	PostgresPollingStatusType status = PGRES_POLLING_WRITING;
 	while (true) {
 		if (fiber_is_cancelled()) {
 			lua_pushinteger(L, -2);
 			safe_pushstring(L, "Fiber was cancelled");
 			return 1;
 		}
-		PostgresPollingStatusType status = PQconnectPoll(conn);
+
+		int sock = PQsocket(conn);
+		if (status == PGRES_POLLING_READING)
+			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
+		if (status == PGRES_POLLING_WRITING)
+			coio_wait(sock, COIO_WRITE, TIMEOUT_INFINITY);
+
+		status = PQconnectPoll(conn);
 		if (status == PGRES_POLLING_OK) {
 			PQsetNoticeProcessor(conn, pg_notice, NULL);
 			lua_pushinteger(L, 1);
@@ -523,14 +530,8 @@ lua_pg_connect(struct lua_State *L)
 			lua_setmetatable(L, -2);
 			return 2;
 		}
-		if (status == PGRES_POLLING_READING) {
-			coio_wait(sock, COIO_READ, TIMEOUT_INFINITY);
+		if (status == PGRES_POLLING_READING || status == PGRES_POLLING_WRITING)
 			continue;
-		}
-		if (status == PGRES_POLLING_WRITING) {
-			coio_wait(sock, COIO_WRITE, TIMEOUT_INFINITY);
-			continue;
-		}
 		break;
 	}
 	lua_pushinteger(L, -1);
