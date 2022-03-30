@@ -97,7 +97,7 @@ lua_push_error(struct lua_State *L)
  * Parse pg values to lua
  */
 static int
-parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
+parse_pg_value(struct lua_State *L, char dec_cast, PGresult *res, int row, int col)
 {
 	if (PQgetisnull(res, row, col))
 		return false;
@@ -107,6 +107,14 @@ parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 	int len = PQgetlength(res, row, col);
 
 	switch (PQftype(res, col)) {
+		case NUMERICOID: {
+			if (dec_cast == 's')
+			{
+				lua_pushlstring(L, val, len);
+				break;
+			}
+			// else fallthrough
+		}
 		case INT2OID:
 		case INT4OID: {
 			lua_pushlstring(L, val, len);
@@ -126,7 +134,6 @@ parse_pg_value(struct lua_State *L, PGresult *res, int row, int col)
 			else
 				lua_pushboolean(L, 0);
 			break;
-		//case NUMERICOID: // leave it as is (otherwise cast to decimal)
 		default:
 			lua_pushlstring(L, val, len);
 	}
@@ -141,6 +148,7 @@ static int
 safe_pg_parsetuples(struct lua_State *L)
 {
 	PGresult *res = (PGresult *)lua_topointer(L, 1);
+	const char dec_cast = (char)lua_tointeger(L, 2);
 	int row, rows = PQntuples(res);
 	int col, cols = PQnfields(res);
 	lua_newtable(L);
@@ -148,7 +156,7 @@ safe_pg_parsetuples(struct lua_State *L)
 		lua_pushnumber(L, row + 1);
 		lua_newtable(L);
 		for (col = 0; col < cols; ++col)
-			parse_pg_value(L, res, row, col);
+			parse_pg_value(L, dec_cast, res, row, col);
 		lua_settable(L, -3);
 	}
 	return 1;
@@ -205,7 +213,7 @@ pg_wait_for_result(PGconn *conn)
  * Appends result fom postgres to lua table
  */
 static int
-pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok)
+pg_resultget(struct lua_State *L, const char dec_cast, PGconn *conn, int *res_no, int status_ok)
 {
 	int wait_res = pg_wait_for_result(conn);
 	if (wait_res != 1)
@@ -235,7 +243,8 @@ pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok)
 			lua_pushinteger(L, (*res_no)++);
 			lua_pushcfunction(L, safe_pg_parsetuples);
 			lua_pushlightuserdata(L, pg_res);
-			fail = lua_pcall(L, 1, 1, 0);
+			lua_pushinteger(L, dec_cast);
+			fail = lua_pcall(L, 2, 1, 0);
 			if (!fail)
 				lua_settable(L, -3);
 		case PGRES_COMMAND_OK:
@@ -328,12 +337,20 @@ static int
 lua_pg_execute(struct lua_State *L)
 {
 	PGconn *conn = lua_check_pgconn(L, 1);
-	if (!lua_isstring(L, 2)) {
+
+	char dec_cast = 'n';
+	if (lua_isstring(L, 2)) {
+		const char *tmp = lua_tostring(L, 2);
+		if (*tmp == 'n' || *tmp == 's') // TODO 'd' - decimal
+			dec_cast = *tmp;
+	}
+
+	if (!lua_isstring(L, 3)) {
 		safe_pushstring(L, "Second param should be a sql command");
 		return lua_push_error(L);
 	}
-	const char *sql = lua_tostring(L, 2);
-	int paramCount = lua_gettop(L) - 2;
+	const char *sql = lua_tostring(L, 3);
+	int paramCount = lua_gettop(L) - 3;
 
 	const char **paramValues = NULL;
 	int  *paramLengths = NULL;
@@ -354,7 +371,7 @@ lua_pg_execute(struct lua_State *L)
 
 		int idx;
 		for (idx = 0; idx < paramCount; ++idx) {
-			lua_parse_param(L, idx + 3, paramValues + idx,
+			lua_parse_param(L, idx + 4, paramValues + idx,
 				paramLengths + idx, paramTypes + idx);
 		}
 		res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
@@ -373,7 +390,7 @@ lua_pg_execute(struct lua_State *L)
 
 	int res_no = 1;
 	int status_ok = 1;
-	while ((status_ok = pg_resultget(L, conn, &res_no, status_ok)));
+	while ((status_ok = pg_resultget(L, dec_cast, conn, &res_no, status_ok)));
 
 	return 2;
 }
