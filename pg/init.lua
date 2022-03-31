@@ -4,6 +4,14 @@ local fiber = require('fiber')
 local driver = require('pg.driver')
 local ffi = require('ffi')
 
+local dnew
+do
+    local ok, dec = pcall(require, "decimal")
+    if ok then
+        dnew = dec.new
+    end
+end
+
 local pool_mt
 local conn_mt
 
@@ -15,7 +23,7 @@ local function conn_create(pg_conn)
         usable = true,
         conn = pg_conn,
         queue = queue,
-        dec_cast = 'n' -- 'n' - number, 's' - string
+        dec_cast = 'n' -- 'n' - number, 's' - string, 'd' - decimal
     }, conn_mt)
 
     return conn
@@ -61,7 +69,7 @@ conn_mt = {
                 self.queue:put(false)
                 return get_error(self.raise.pool, 'Connection is broken')
             end
-            local status, datas = self.conn:execute(self.dec_cast, sql, ...)
+            local status, datas = self.conn:execute(self.dec_cast, dnew, sql, ...)
             if status ~= 0 then
                 self.queue:put(status > 0)
                 return error(datas)
