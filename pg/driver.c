@@ -293,6 +293,13 @@ static void
 lua_parse_param(struct lua_State *L,
 	int idx, const char **value, int *length, Oid *type)
 {
+	static char buf[512]; // buffer for serialized [u]int64_t
+	static char *pos;
+	if (idx == 5) { // lua_parse_param(L, idx + 5, ...
+		*buf = '\0';
+		pos = buf;
+	}
+
 	if (lua_isnil(L, idx)) {
 		*value = NULL;
 		*length = 0;
@@ -320,20 +327,20 @@ lua_parse_param(struct lua_State *L,
 	if (luaL_iscdata(L, idx)) {
 		uint32_t ctypeid = 0;
 		void *cdata = luaL_checkcdata(L, idx, &ctypeid);
-		static char buf[24];
 		int len = 0;
 		if (ctypeid == luaL_ctypeid(L, "int64_t")) {
-			len = snprintf(buf, sizeof(buf), "%ld", *(int64_t*)cdata);
+			len = snprintf(pos, sizeof(buf) - (pos - buf), "%ld", *(int64_t*)cdata);
 			*type = INT8OID;
 		}
 		else if (ctypeid == luaL_ctypeid(L, "uint64_t")) {
-			len = snprintf(buf, sizeof(buf), "%lu", *(uint64_t*)cdata);
+			len = snprintf(pos, sizeof(buf) - (pos - buf), "%lu", *(uint64_t*)cdata);
 			*type = NUMERICOID;
 		}
 
 		if (len > 0) {
-			*value = buf;
+			*value = pos;
 			*length = len;
+			pos += len + 1;
 			return;
 		}
 	}
