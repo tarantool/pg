@@ -4,12 +4,9 @@ local fiber = require('fiber')
 local driver = require('pg.driver')
 local ffi = require('ffi')
 
-local dnew
-do
-    local ok, dec = pcall(require, "decimal")
-    if ok then
-        dnew = dec.new
-    end
+local has_decimal, dec = pcall(require, 'decimal')
+if has_decimal then
+    dnew = dec.new
 end
 
 local pool_mt
@@ -23,7 +20,10 @@ local function conn_create(pg_conn)
         usable = true,
         conn = pg_conn,
         queue = queue,
-        dec_cast = 'n' -- 'n' - number, 's' - string, 'd' - decimal
+        dec_cast = 'n' -- Defined in pg/driver.c:
+                       -- 'n' - number,
+                       -- 's' - string,
+                       -- 'd' - decimal.
     }, conn_mt)
 
     return conn

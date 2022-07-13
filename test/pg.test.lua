@@ -129,6 +129,41 @@ function test_pg_int64(t, p)
     p:put(conn)
 end
 
+function test_pg_decimal(t, p)
+    t:plan(8)
+
+    -- Setup
+    conn = p:get()
+    t:isnt(conn, nil, 'connection is established')
+    local num = 4500
+    conn:execute('CREATE TABLE dectest (num NUMERIC(7,2))')
+    conn:execute(('INSERT INTO dectest VALUES(%d)'):format(num))
+
+    local res, r, _
+    -- dec_cast is 'n'
+    t:is(conn.dec_cast, 'n', 'decimal casting type is "n" by default')
+    r, _ = conn:execute('SELECT num FROM dectest')
+    res = r[1][1]['num']
+    t:is(type(res), 'number', 'type is "number"')
+    t:is(res, num, 'decimal number is correct')
+    -- dec_cast is 's'
+    conn.dec_cast = 's'
+    r, _ = conn:execute('SELECT num FROM dectest')
+    res = r[1][1]['num']
+    t:is(type(res), 'string', 'type is "string"')
+    t:is(res, '4500.00', 'decimal number is correct')
+    -- dec_cast is 'd'
+    conn.dec_cast = 'd'
+    r, _ = conn:execute('SELECT num FROM dectest')
+    res = r[1][1]['num']
+    t:is(type(res), 'cdata', 'type is "decimal"')
+    t:is(res, num, 'decimal number is correct')
+
+    -- Teardown
+    conn:execute('DROP TABLE dectest')
+    p:put(conn)
+end
+
 tap.test('connection old api', test_old_api, conn)
 local pool_conn = p:get()
 tap.test('connection old api via pool', test_old_api, pool_conn)
@@ -136,4 +171,5 @@ p:put(pool_conn)
 tap.test('test collection connections', test_gc, p)
 tap.test('connection concurrent', test_conn_concurrent, p)
 tap.test('int64', test_pg_int64, p)
+tap.test('decimal', test_pg_decimal, p)
 p:close()

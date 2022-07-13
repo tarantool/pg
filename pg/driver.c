@@ -49,6 +49,25 @@
 #undef PACKAGE_VERSION
 #include <module.h>
 
+/**
+ * The fallthrough attribute with a null statement serves as a fallthrough
+ * statement. It hints to the compiler that a statement that falls through
+ * to another case label, or user-defined label in a switch statement is
+ * intentional and thus the -Wimplicit-fallthrough warning must not trigger.
+ * The fallthrough attribute may appear at most once in each attribute list,
+ * and may not be mixed with other attributes. It can only be used in a switch
+ * statement (the compiler will issue an error otherwise), after a preceding
+ * statement and before a logically succeeding case label, or user-defined
+ * label.
+ */
+#if defined(__cplusplus) && __has_cpp_attribute(fallthrough)
+#  define FALLTHROUGH [[fallthrough]]
+#elif __has_attribute(fallthrough) || (defined(__GNUC__) && __GNUC__ >= 7)
+#  define FALLTHROUGH __attribute__((fallthrough))
+#else
+#  define FALLTHROUGH
+#endif
+
 struct dec_opt {
 	char cast;
 	int dnew_index;
@@ -103,7 +122,7 @@ lua_push_error(struct lua_State *L)
  * Parse pg values to lua
  */
 static int
-parse_pg_value(struct lua_State *L, dec_opt_t *dopt, PGresult *res, int row, int col)
+parse_pg_value(struct lua_State *L, PGresult *res, int row, int col, dec_opt_t *dopt)
 {
 	if (PQgetisnull(res, row, col))
 		return false;
@@ -128,7 +147,8 @@ parse_pg_value(struct lua_State *L, dec_opt_t *dopt, PGresult *res, int row, int
 				}
 				break;
 			}
-			// else fallthrough
+			/* 'n': fallthrough */
+			FALLTHROUGH;
 		}
 		case INT2OID:
 		case INT4OID: {
@@ -171,7 +191,7 @@ safe_pg_parsetuples(struct lua_State *L)
 		lua_pushnumber(L, row + 1);
 		lua_newtable(L);
 		for (col = 0; col < cols; ++col)
-			parse_pg_value(L, dopt, res, row, col);
+			parse_pg_value(L, res, row, col, dopt);
 		lua_settable(L, -3);
 	}
 	return 1;
@@ -228,7 +248,7 @@ pg_wait_for_result(PGconn *conn)
  * Appends result fom postgres to lua table
  */
 static int
-pg_resultget(struct lua_State *L, dec_opt_t *dopt, PGconn *conn, int *res_no, int status_ok)
+pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok, dec_opt_t *dopt)
 {
 	int wait_res = pg_wait_for_result(conn);
 	if (wait_res != 1)
@@ -293,9 +313,11 @@ static void
 lua_parse_param(struct lua_State *L,
 	int idx, const char **value, int *length, Oid *type)
 {
-	static char buf[512]; // buffer for serialized [u]int64_t
-	static char *pos;
-	if (idx == 5) { // lua_parse_param(L, idx + 5, ...
+    /* Serialized [u]int64_t */
+	static char buf[512];
+	static char *pos = NULL;
+    /* lua_parse_param(L, idx + 5, ...) */
+	if (idx == 5) {
 		*buf = '\0';
 		pos = buf;
 	}
@@ -362,9 +384,11 @@ lua_pg_execute(struct lua_State *L)
 
 	dec_opt_t dopt = {'n', -1};
 	if (lua_isstring(L, 2)) {
-		const char *tmp = lua_tostring(L, 2);
-		if (*tmp == 'n' || *tmp == 's' || *tmp == 'd')
-			dopt.cast = *tmp;
+		const char *dec_cast_type = lua_tostring(L, 2);
+		if (*dec_cast_type == 'n' ||
+			*dec_cast_type == 's' ||
+			*dec_cast_type == 'd')
+			dopt.cast = *dec_cast_type;
 	}
 
 	if (!lua_isstring(L, 4)) {
@@ -420,7 +444,7 @@ lua_pg_execute(struct lua_State *L)
 
 	int res_no = 1;
 	int status_ok = 1;
-	while ((status_ok = pg_resultget(L, &dopt, conn, &res_no, status_ok)));
+	while ((status_ok = pg_resultget(L, conn, &res_no, status_ok, &dopt)));
 
 	if (dopt.dnew_index != -1)
 		luaL_unref(L, LUA_REGISTRYINDEX, dopt.dnew_index);
