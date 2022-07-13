@@ -202,7 +202,7 @@ pg_wait_for_result(PGconn *conn)
 }
 
 /**
- * Appends result fom postgres to lua table
+ * Appends result from postgres to lua table
  */
 static int
 pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok)
