@@ -54,6 +54,8 @@ Connect to a database.
  - `db` - a database name
  - `conn_string` (mutual exclusive with host, port, user, pass, db) - PostgreSQL
    [connection string][PQconnstring]
+ - `dec_cast` - an option that switches casting types for `NUMERIC` PostgreSQL
+   type. Possible values: `n` (`number`), `s` (`string`), `d` (`decimal`).
 
 *Returns*:
 
