@@ -280,8 +280,11 @@ pg_resultget(struct lua_State *L, PGconn *conn, int *res_no, int status_ok, dec_
 			lua_pushlightuserdata(L, pg_res);
 			lua_pushlightuserdata(L, dopt);
 			fail = lua_pcall(L, 2, 1, 0);
-			if (!fail)
+			if (!fail) {
 				lua_settable(L, -3);
+				break;
+			}
+			break;
 		case PGRES_COMMAND_OK:
 			res = 1;
 			break;
