@@ -3,6 +3,7 @@
 local fiber = require('fiber')
 local driver = require('pg.driver')
 local ffi = require('ffi')
+local json = require("json")
 
 local pool_mt
 local conn_mt

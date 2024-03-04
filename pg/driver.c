@@ -300,6 +300,68 @@ lua_parse_param(struct lua_State *L,
 	*type = TEXTOID;
 }
 
+void printTable(lua_State* L, int index) {
+    // Проверка, является ли значение в стеке таблицей
+    if (lua_istable(L, index)) {
+        // Получение размера таблицы
+        int size = lua_rawlen(L, index);
+
+        // Перебор элементов таблицы
+        for (int i = 1; i <= size; i++) {
+            // Получение значения элемента по индексу
+            lua_pushinteger(L, i);
+            lua_gettable(L, index);
+            
+            // Проверка, является ли значение элемента таблицы таблицей
+            if (lua_istable(L, -1)) {
+                // Рекурсивный вызов для вложенной таблицы
+                printTable(L, lua_gettop(L));
+            } else {
+                // Извлечение значения из стека Lua
+                const char* value = lua_tostring(L, -1);
+
+                // Вывод значения в консоль
+                printf("Value: %s\n", value);
+            }
+            
+            // Освобождение значения из стека Lua
+            lua_pop(L, 1);
+        }
+    }
+}
+
+
+static int
+lua_pg_batch_execute(struct lua_State* L) 
+{
+	PGconn *conn = lua_check_pgconn(L, 1);
+	if (!lua_isstring(L, 2)) {
+		safe_pushstring(L, "Second param should be a sql command");
+		return lua_push_error(L);
+	}
+
+	const char* sql = lua_tostring(L, 2);
+	int batch_size = lua_gettop(L) - 2;
+
+	const char** paramValues = NULL;
+	int* paramLengths = NULL;
+
+	if (batch_size > 0) {
+		// TODO(maxsmile123): Размер какой?
+		char* buffer = (char *)lua_newuserdata(L, batch_size *
+			(sizeof(*paramValues) + sizeof(*paramLengths)));
+
+		
+	}
+
+	res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
+			paramValues, paramLengths, NULL, 0);
+
+
+
+
+};
+
 /**
  * Start query execution
  */
