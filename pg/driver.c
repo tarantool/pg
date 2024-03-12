@@ -300,13 +300,13 @@ lua_parse_param(struct lua_State *L,
 	*type = TEXTOID;
 }
 
-struct Size {
+struct DataBatchInfo {
 	ssize_t data_size = 0;
 	ssize_t batch_size = 0;
 }
 
-struct Size lua_get_data_size(struct lua_State* L, int index){
-	struct Size res;
+struct DataBatchInfo lua_get_data_size(struct lua_State* L, int index){
+	struct DataBatchInfo res;
 	res.batch_size = 0;
 	res.data_size = 0;
 	if (lua_istable(L, index)) {
@@ -333,27 +333,29 @@ char* lua_fill_buffer(
 	int *lengths, 
 	int *formats
 ) {
-	struct Size size = lua_get_data_size(L, index);
+	struct DataBatchInfo info = lua_get_data_size(L, index);
 	if (size.batch_size == -1 || size.data_size == -1) {
 		return NULL;
 	}
 
 	// [datas][data_lengths][formats]
-	char* buffer = (char *)lua_newuserdata(L, size.data_size + size.batch_size * (sizeof(int) * 2));
+	char* buffer = (char *)lua_newuserdata(
+		L, info.data_size + info.batch_size * (sizeof(*lengths) + sizeof(*formats))
+	);
 
-	size_t length_offset = size.data_size;
-	size_t format_offset = length_offset + size.batch_size * sizeof(int);
+	size_t length_offset = info.data_size;
+	size_t format_offset = length_offset + info.batch_size * sizeof(*lengths);
 	size_t idx = 0;
-	size_t len = 0;
+	size_t total_len = 0;
 	size_t current_len = 0;
 	if (lua_istable(L, index)) {
         lua_pushnil(L);
         while (lua_next(L, index) != 0) {
             if (lua_isstring(L, -1)) {
-				buffer[current_len] = lua_tolstring(L, index, &len);
-				current_len += len;
-				buffer[length_offset + idx * sizeof(int)] = &len;
-				buffer[format_offset + idx * sizeof(int)] = 0;
+				buffer[total_len] = lua_tolstring(L, index, &current_len);
+				total_len += current_len;
+				buffer[length_offset + idx * sizeof(*lengths)] = current_len;
+				buffer[format_offset + idx * sizeof(*formats)] = 0;
 			} else {
 				return NULL;
 			}
@@ -400,7 +402,7 @@ lua_pg_batch_execute(struct lua_State* L)
 		lua_pushstring(L, PQerrorMessage(conn));
 		return 2;
 	}
-	
+
 	lua_pushinteger(L, 0);
 	lua_newtable(L);
 
