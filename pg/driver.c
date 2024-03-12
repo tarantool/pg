@@ -300,36 +300,73 @@ lua_parse_param(struct lua_State *L,
 	*type = TEXTOID;
 }
 
-void printTable(lua_State* L, int index) {
-    // Проверка, является ли значение в стеке таблицей
-    if (lua_istable(L, index)) {
-        // Получение размера таблицы
-        int size = lua_rawlen(L, index);
+struct Size {
+	ssize_t data_size = 0;
+	ssize_t batch_size = 0;
+}
 
-        // Перебор элементов таблицы
-        for (int i = 1; i <= size; i++) {
-            // Получение значения элемента по индексу
-            lua_pushinteger(L, i);
-            lua_gettable(L, index);
-            
-            // Проверка, является ли значение элемента таблицы таблицей
-            if (lua_istable(L, -1)) {
-                // Рекурсивный вызов для вложенной таблицы
-                printTable(L, lua_gettop(L));
-            } else {
-                // Извлечение значения из стека Lua
-                const char* value = lua_tostring(L, -1);
-
-                // Вывод значения в консоль
-                printf("Value: %s\n", value);
-            }
-            
-            // Освобождение значения из стека Lua
+struct Size lua_get_data_size(struct lua_State* L, int index){
+	struct Size res;
+	res.batch_size = 0;
+	res.data_size = 0;
+	if (lua_istable(L, index)) {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+			++res.batch_size;
+            if (lua_isstring(L, -1)) { // value must be json i.e. string
+				res.data_size += strlen(lua_tostring(L, -1));
+			} else {
+				res.batch_size = -1;
+				res.data_size = -1;
+				break;
+			}
             lua_pop(L, 1);
         }
     }
+	return res;
 }
 
+char* lua_fill_buffer(
+	struct lua_State* L, 
+	int index,
+	const char **values, 
+	int *lengths, 
+	int *formats
+) {
+	struct Size size = lua_get_data_size(L, index);
+	if (size.batch_size == -1 || size.data_size == -1) {
+		return NULL;
+	}
+
+	// [datas][data_lengths][formats]
+	char* buffer = (char *)lua_newuserdata(L, size.data_size + size.batch_size * (sizeof(int) * 2));
+
+	size_t length_offset = size.data_size;
+	size_t format_offset = length_offset + size.batch_size * sizeof(int);
+	size_t idx = 0;
+	size_t len = 0;
+	size_t current_len = 0;
+	if (lua_istable(L, index)) {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0) {
+            if (lua_isstring(L, -1)) {
+				buffer[current_len] = lua_tolstring(L, index, &len);
+				current_len += len;
+				buffer[length_offset + idx * sizeof(int)] = &len;
+				buffer[format_offset + idx * sizeof(int)] = 0;
+			} else {
+				return NULL;
+			}
+            lua_pop(L, 1);
+        }
+    }
+
+	values = buffer;
+	lengths = (int*)(buffer + length_offset);
+	formats = (int*)(buffer + format_offset);
+
+	return buffer
+}
 
 static int
 lua_pg_batch_execute(struct lua_State* L) 
@@ -340,22 +377,38 @@ lua_pg_batch_execute(struct lua_State* L)
 		return lua_push_error(L);
 	}
 
-	const char* sql = lua_tostring(L, 2);
-	int batch_size = lua_gettop(L) - 2;
+	const char* sql = lua_tostring(L, 2); // ex: SELECT package.function($1::jsonb[]) - make this in lua part
+	int paramCount = lua_gettop(L) - 2;
 
 	const char** paramValues = NULL;
-	int* paramLengths = NULL;
+	int* paramLengths = NULL; // size = batch_size
+	int* paramFormats = NULL; // size = batch_size
 
-	if (batch_size > 0) {
-		// TODO(maxsmile123): Размер какой?
-		char* buffer = (char *)lua_newuserdata(L, batch_size *
-			(sizeof(*paramValues) + sizeof(*paramLengths)));
-
-		
+	if (paramCount > 0) {
+		char* buffer = lua_fill_buffer(L, 3, paramValues, paramLengths, paramFormats);
+		if (!buffer) {
+			safe_pushstring(L, "Data must be present as table with json values");
+			return lua_push_error(L);
+		}
 	}
 
-	res = PQsendQueryParams(conn, sql, paramCount, paramTypes,
-			paramValues, paramLengths, NULL, 0);
+	int res = PQsendQueryParams(conn, sql, paramCount, NULL,
+			paramValues, paramLengths, paramFormats, 0);
+
+	if (res == -1) {
+		lua_pushinteger(L, PQstatus(conn) == CONNECTION_BAD ? -1: 0);
+		lua_pushstring(L, PQerrorMessage(conn));
+		return 2;
+	}
+	
+	lua_pushinteger(L, 0);
+	lua_newtable(L);
+
+	int res_no = 1;
+	int status_ok = 1;
+	while ((status_ok = pg_resultget(L, conn, &res_no, status_ok)));
+
+	return 2;
 
 
 
