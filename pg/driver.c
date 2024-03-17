@@ -662,6 +662,7 @@ luaopen_pg_driver(lua_State *L)
 {
 	static const struct luaL_Reg methods [] = {
 		{"execute",	lua_pg_execute},
+		{"batch_execute",	lua_pg_batch_execute},
 #if PG_VERSION_NUM >= 90000
 		{"quote",	lua_pg_quote},
 		{"quote_ident",	lua_pg_quote_ident},

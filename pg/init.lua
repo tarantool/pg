@@ -3,7 +3,7 @@
 local fiber = require('fiber')
 local driver = require('pg.driver')
 local ffi = require('ffi')
-local json = require("json")
+local json = require("dkjson")
 
 local pool_mt
 local conn_mt
@@ -78,7 +78,21 @@ conn_mt = {
                 return get_error(self.raise.pool, 'Connection is broken')
             end
 
-
+            local function convert_table_to_json(tbl)
+                for key, value in pairs(tbl) do
+                    if type(value) == "table" then
+                        tbl[key] = json.encode(value)
+                    end
+                end
+            end
+            local json_data = convert_table_to_json(data)
+            local status, datas = self.conn:batch_execute("SELECT " .. sql .. "($1::jsonb[])", json_data)
+            if status ~= 0 then
+                self.queue:put(status > 0)
+                return error(datas)
+            end
+            self.queue:put(true)
+            return datas, true
         end,
         begin = function(self)
             return self:execute('BEGIN') ~= nil
