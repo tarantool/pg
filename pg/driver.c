@@ -30,6 +30,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <string.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -301,9 +302,9 @@ lua_parse_param(struct lua_State *L,
 }
 
 struct DataBatchInfo {
-	ssize_t data_size = 0;
-	ssize_t batch_size = 0;
-}
+	ssize_t data_size;
+	ssize_t batch_size;
+};
 
 struct DataBatchInfo lua_get_data_size(struct lua_State* L, int index){
 	struct DataBatchInfo res;
@@ -334,7 +335,7 @@ char* lua_fill_buffer(
 	int *formats
 ) {
 	struct DataBatchInfo info = lua_get_data_size(L, index);
-	if (size.batch_size == -1 || size.data_size == -1) {
+	if (info.batch_size == -1 || info.data_size == -1) {
 		return NULL;
 	}
 
@@ -348,14 +349,24 @@ char* lua_fill_buffer(
 	size_t idx = 0;
 	size_t total_len = 0;
 	size_t current_len = 0;
+	size_t zero = 0;
 	if (lua_istable(L, index)) {
         lua_pushnil(L);
         while (lua_next(L, index) != 0) {
             if (lua_isstring(L, -1)) {
-				buffer[total_len] = lua_tolstring(L, index, &current_len);
+				const char* data = lua_tolstring(L, index, &current_len);
+				memcpy(buffer + total_len, data, current_len);
 				total_len += current_len;
-				buffer[length_offset + idx * sizeof(*lengths)] = current_len;
-				buffer[format_offset + idx * sizeof(*formats)] = 0;
+				memcpy(
+					buffer + length_offset + idx * sizeof(*lengths), 
+					&current_len, 
+					sizeof(current_len)
+				);
+				memcpy(
+					buffer + format_offset + idx * sizeof(*formats), 
+					&zero, 
+					sizeof(zero)
+				);
 			} else {
 				return NULL;
 			}
@@ -367,7 +378,7 @@ char* lua_fill_buffer(
 	lengths = (int*)(buffer + length_offset);
 	formats = (int*)(buffer + format_offset);
 
-	return buffer
+	return buffer;
 }
 
 static int
