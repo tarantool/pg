@@ -10,7 +10,7 @@ description = {
     license  = 'BSD',
 }
 dependencies = {
-    'lua >= 5.1'
+    'lua >= 5.1',
     'dkjson >= 2.6'
 }
 external_dependencies = {
