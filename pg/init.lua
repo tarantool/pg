@@ -69,6 +69,17 @@ conn_mt = {
             self.queue:put(true)
             return datas, true
         end,
+        batch_execute = function(self, sql, data)
+            if not self.usable then
+                return get_error(self.raise.pool, 'Connection is not usable')
+            end
+            if not self.queue:get() then
+                self.queue:put(false)
+                return get_error(self.raise.pool, 'Connection is broken')
+            end
+
+
+        end,
         begin = function(self)
             return self:execute('BEGIN') ~= nil
         end,

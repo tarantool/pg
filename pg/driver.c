@@ -363,7 +363,7 @@ char* lua_fill_buffer(
         }
     }
 
-	values = buffer;
+	values = (const char **)buffer;
 	lengths = (int*)(buffer + length_offset);
 	formats = (int*)(buffer + format_offset);
 
