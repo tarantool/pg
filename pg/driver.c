@@ -379,7 +379,7 @@ lua_pg_batch_execute(struct lua_State* L)
 		return lua_push_error(L);
 	}
 
-	const char* sql = lua_tostring(L, 2); // ex: SELECT package.function($1::jsonb[]) - make this in lua part
+	const char* sql = lua_tostring(L, 2); // ex: SELECT package.function($1::jsonb[]) - TODO(maxsmile123) make this in lua part
 	int paramCount = lua_gettop(L) - 2;
 
 	const char** paramValues = NULL;
